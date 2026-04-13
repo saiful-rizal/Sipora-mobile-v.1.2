@@ -1,6 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/sipora_api_service.dart';
-import '../services/notification_state.dart';
+import 'dokumen_semua_page.dart';
 import 'notifikasi.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -16,11 +20,13 @@ class _DashboardPageState extends State<DashboardPage> {
       s * (MediaQuery.of(context).size.width / 400).clamp(0.65, 1.1);
 
   final SiporaApiService _apiService = SiporaApiService();
+  final ImagePicker _imagePicker = ImagePicker();
   bool _isLoading = true;
   final String _profileName = 'Saiful Rizal';
   final String _profileRole = 'Mahasiswa';
   final String _profileEmail = 'saiful.rizal@polije.ac.id';
   final String _profileNim = 'E41231234';
+  Uint8List? _profilePhotoBytes;
 
   List<Map<String, dynamic>> _stats = [
     {
@@ -65,6 +71,7 @@ class _DashboardPageState extends State<DashboardPage> {
       'date': '24 Sept 2025',
       'category': 'Teknologi',
       'color': const Color(0xFF4F46E5),
+      'file_path': '',
     },
     {
       'title': 'Analisis Kinerja Struktur Beton dengan Metode Finite Element',
@@ -73,6 +80,7 @@ class _DashboardPageState extends State<DashboardPage> {
       'date': '19 Sept 2025',
       'category': 'Teknik Sipil',
       'color': const Color(0xFF10B981),
+      'file_path': '',
     },
     {
       'title': 'Optimasi Sistem Kontrol Motor Listrik untuk Kendaraan Hybrid',
@@ -81,6 +89,7 @@ class _DashboardPageState extends State<DashboardPage> {
       'date': '13 Sept 2025',
       'category': 'Teknik Elektro',
       'color': const Color(0xFFF59E0B),
+      'file_path': '',
     },
     {
       'title': 'Rancang Bangun Sistem Keamanan Jaringan Berbasis IoT',
@@ -89,6 +98,7 @@ class _DashboardPageState extends State<DashboardPage> {
       'date': '10 Sept 2025',
       'category': 'Informatika',
       'color': const Color(0xFFEF4444),
+      'file_path': '',
     },
     {
       'title': 'Studi Komparatif Bauran Pemasaran UMKM di Era Digital',
@@ -97,6 +107,7 @@ class _DashboardPageState extends State<DashboardPage> {
       'date': '05 Sept 2025',
       'category': 'Bisnis',
       'color': const Color(0xFF8B5CF6),
+      'file_path': '',
     },
   ];
 
@@ -158,6 +169,7 @@ class _DashboardPageState extends State<DashboardPage> {
           'date': (doc['date'] ?? '-').toString(),
           'category': (doc['category'] ?? 'Dokumen').toString(),
           'color': const Color(0xFF4F46E5),
+          'file_path': (doc['file_path'] ?? '').toString(),
         };
       }).toList();
 
@@ -171,6 +183,61 @@ class _DashboardPageState extends State<DashboardPage> {
       if (!mounted) return;
       setState(() => _isLoading = false);
     }
+  }
+
+  Uri? _resolveDocumentUri(Map<String, dynamic> doc) {
+    final filePath = doc['file_path']?.toString() ?? '';
+    if (filePath.trim().isEmpty) return null;
+    return _apiService.resolveFileUri(filePath);
+  }
+
+  Future<void> _downloadDocument(Map<String, dynamic> doc) async {
+    final uri = _resolveDocumentUri(doc);
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File dokumen belum tersedia')),
+      );
+      return;
+    }
+
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal membuka file dokumen')),
+      );
+    }
+  }
+
+  Future<void> _requestProfilePhoto() async {
+    try {
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        imageQuality: 85,
+      );
+
+      if (photo == null) return;
+      final bytes = await photo.readAsBytes();
+
+      if (!mounted) return;
+      setState(() => _profilePhotoBytes = bytes);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kamera tidak dapat dibuka')),
+      );
+    }
+  }
+
+  void _openDocumentDetail(Map<String, dynamic> doc) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            DetailDokumenPage(document: doc, apiService: _apiService),
+      ),
+    );
   }
 
   @override
@@ -193,17 +260,22 @@ class _DashboardPageState extends State<DashboardPage> {
                 bottom: 90.0,
               ), // Padding bawah agar tidak ketutupan navbar
               child: Padding(
-                padding: EdgeInsets.all(_w(0.04)),
+                padding: EdgeInsets.fromLTRB(
+                  _w(0.04),
+                  _w(0.01),
+                  _w(0.04),
+                  _w(0.04),
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(height: _w(0.012)),
+                    SizedBox(height: _w(0.004)),
                     _isLoading
                         ? const Center(child: CircularProgressIndicator())
                         : _buildStatsGrid(),
-                    SizedBox(height: _w(0.022)),
+                    SizedBox(height: _w(0.04)),
                     _buildRecentDocuments(),
-                    SizedBox(height: _w(0.03)),
+                    SizedBox(height: _w(0.04)),
                   ],
                 ),
               ),
@@ -260,18 +332,10 @@ class _DashboardPageState extends State<DashboardPage> {
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: _w(0.16),
-                          height: _w(0.16),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color(0xFF1E3A5F).withOpacity(0.08),
-                          ),
-                          child: Icon(
-                            Icons.person,
-                            color: const Color(0xFF1E3A5F),
-                            size: _f(34),
-                          ),
+                        _buildProfileAvatar(
+                          size: _w(0.16),
+                          onTap: _requestProfilePhoto,
+                          showCameraBadge: true,
                         ),
                         SizedBox(width: _w(0.03)),
                         Expanded(
@@ -517,75 +581,31 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ],
                   ),
-                  ValueListenableBuilder<int>(
-                    valueListenable: NotificationState.unreadCount,
-                    builder: (context, unreadCount, _) {
-                      return Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const NotificationPage(),
-                              ),
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(999),
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              Container(
-                                padding: EdgeInsets.all(_w(0.02)),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.15),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.notifications_outlined,
-                                  color: Colors.white,
-                                  size: _f(22),
-                                ),
-                              ),
-                              if (unreadCount > 0)
-                                Positioned(
-                                  top: -2,
-                                  right: -2,
-                                  child: Container(
-                                    constraints: const BoxConstraints(
-                                      minWidth: 17,
-                                      minHeight: 17,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFFF4D4F),
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(
-                                        color: Colors.white,
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        unreadCount > 99
-                                            ? '99+'
-                                            : '$unreadCount',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const NotificationPage(),
                           ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(999),
+                      child: Container(
+                        padding: EdgeInsets.all(_w(0.02)),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.15),
+                          shape: BoxShape.circle,
                         ),
-                      );
-                    },
+                        child: Icon(
+                          Icons.notifications_outlined,
+                          color: Colors.white,
+                          size: _f(22),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -597,29 +617,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: InkWell(
                       onTap: _showProfilePopup,
                       borderRadius: BorderRadius.circular(999),
-                      child: Container(
-                        width: _w(0.13),
-                        height: _w(0.13),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                          border: Border.all(color: Colors.white, width: 2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Icon(
-                            Icons.person,
-                            color: const Color(0xFF1E3A5F),
-                            size: _f(28),
-                          ),
-                        ),
-                      ),
+                      child: _buildProfileAvatar(size: _w(0.13)),
                     ),
                   ),
                   SizedBox(width: _w(0.03)),
@@ -682,6 +680,82 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Widget _buildProfileAvatar({
+    required double size,
+    VoidCallback? onTap,
+    bool showCameraBadge = false,
+  }) {
+    final avatar = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: _profilePhotoBytes != null
+            ? Image.memory(
+                _profilePhotoBytes!,
+                fit: BoxFit.cover,
+                width: size,
+                height: size,
+              )
+            : Container(
+                color: const Color(0xFF1E3A5F).withOpacity(0.08),
+                child: Icon(
+                  Icons.person,
+                  color: const Color(0xFF1E3A5F),
+                  size: size * 0.55,
+                ),
+              ),
+      ),
+    );
+
+    final content = showCameraBadge
+        ? Stack(
+            clipBehavior: Clip.none,
+            children: [
+              avatar,
+              Positioned(
+                right: -2,
+                bottom: -2,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF1E3A5F),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.photo_camera_rounded,
+                    size: size * 0.18,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          )
+        : avatar;
+
+    if (onTap == null) return content;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(size / 2),
+        child: content,
+      ),
+    );
+  }
+
   // ==========================================
   // STATS GRID
   // ==========================================
@@ -701,26 +775,17 @@ class _DashboardPageState extends State<DashboardPage> {
                 color: const Color(0xFF1E3A5F),
               ),
             ),
-            TextButton(
-              onPressed: () {},
-              child: Text(
-                'Lihat Semua',
-                style: TextStyle(
-                  color: const Color(0xFF4F46E5),
-                  fontSize: _f(11),
-                ),
-              ),
-            ),
           ],
         ),
-        SizedBox(height: _w(0.012)),
+        SizedBox(height: _w(0.002)),
         GridView.builder(
+          padding: EdgeInsets.zero,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            crossAxisSpacing: _w(0.03),
-            mainAxisSpacing: _w(0.03),
+            crossAxisSpacing: _w(0.025),
+            mainAxisSpacing: _w(0.025),
             childAspectRatio: sw > 400 ? 1.5 : 1.3,
           ),
           itemCount: _stats.length,
@@ -837,7 +902,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ],
         ),
-        SizedBox(height: _w(0.012)),
+        SizedBox(height: _w(0.002)),
         ListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -849,144 +914,225 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildDocumentCard(Map<String, dynamic> doc) {
+    final color = doc['color'] as Color;
+
     return Container(
       margin: EdgeInsets.only(bottom: _w(0.04)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(_w(0.04)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.08),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(_w(0.04)),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: _w(0.11),
-                  height: _w(0.12),
-                  decoration: BoxDecoration(
-                    color: (doc['color'] as Color).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(_w(0.03)),
-                  ),
-                  child: Icon(
-                    Icons.description_rounded,
-                    color: doc['color'] as Color,
-                    size: _f(26),
-                  ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(_w(0.04)),
+          onTap: () => _openDocumentDetail(doc),
+          child: Ink(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(_w(0.04)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.08),
+                  blurRadius: 15,
+                  offset: const Offset(0, 5),
                 ),
-                SizedBox(width: _w(0.035)),
-                Expanded(
-                  child: Column(
+              ],
+            ),
+            child: Column(
+              children: [
+                Padding(
+                  padding: EdgeInsets.all(_w(0.04)),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: _w(0.02),
-                              vertical: _w(0.008),
-                            ),
-                            decoration: BoxDecoration(
-                              color: (doc['color'] as Color).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(_w(0.015)),
-                            ),
-                            child: Text(
-                              doc['category'] as String,
-                              style: TextStyle(
-                                color: doc['color'] as Color,
-                                fontSize: _f(9.5),
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.event,
-                                size: _f(11),
-                                color: Colors.grey[500],
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                doc['date'] as String,
-                                style: TextStyle(
-                                  fontSize: _f(10),
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: _w(0.015)),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          doc['title'] as String,
-                          style: TextStyle(
-                            fontSize: _f(13.5),
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF1E3A5F),
-                            height: 1.35,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                      Container(
+                        width: _w(0.11),
+                        height: _w(0.12),
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(_w(0.03)),
+                        ),
+                        child: Icon(
+                          Icons.description_rounded,
+                          color: color,
+                          size: _f(26),
                         ),
                       ),
-                      SizedBox(height: _w(0.02)),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Row(
+                      SizedBox(width: _w(0.035)),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                Icon(
-                                  Icons.person_pin,
-                                  size: _f(12),
-                                  color: Colors.grey[500],
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    doc['author'] as String,
-                                    style: TextStyle(
-                                      fontSize: _f(10.5),
-                                      color: Colors.grey[700],
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: _w(0.02),
+                                    vertical: _w(0.008),
                                   ),
+                                  decoration: BoxDecoration(
+                                    color: color.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(
+                                      _w(0.015),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    doc['category'] as String,
+                                    style: TextStyle(
+                                      color: color,
+                                      fontSize: _f(9.5),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.event,
+                                      size: _f(11),
+                                      color: Colors.grey[500],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      doc['date'] as String,
+                                      style: TextStyle(
+                                        fontSize: _f(10),
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.download_done_rounded,
-                                size: _f(13),
-                                color: Colors.green[600],
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${doc['downloads']}',
+                            SizedBox(height: _w(0.015)),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                doc['title'] as String,
                                 style: TextStyle(
-                                  fontSize: _f(10.5),
-                                  color: Colors.grey[700],
-                                  fontWeight: FontWeight.w500,
+                                  fontSize: _f(13.5),
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF1E3A5F),
+                                  height: 1.35,
                                 ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ],
+                            ),
+                            SizedBox(height: _w(0.02)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.person_pin,
+                                        size: _f(12),
+                                        color: Colors.grey[500],
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          doc['author'] as String,
+                                          style: TextStyle(
+                                            fontSize: _f(10.5),
+                                            color: Colors.grey[700],
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.download_done_rounded,
+                                      size: _f(13),
+                                      color: Colors.green[600],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${doc['downloads']}',
+                                      style: TextStyle(
+                                        fontSize: _f(10.5),
+                                        color: Colors.grey[700],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFAFBFC),
+                    borderRadius: BorderRadius.vertical(
+                      bottom: Radius.circular(_w(0.04)),
+                    ),
+                    border: Border(
+                      top: BorderSide(
+                        color: Colors.grey.withOpacity(0.08),
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                  padding: EdgeInsets.fromLTRB(
+                    _w(0.04),
+                    _w(0.025),
+                    _w(0.04),
+                    _w(0.03),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _openDocumentDetail(doc),
+                          icon: Icon(Icons.visibility_outlined, size: _f(16)),
+                          label: Text(
+                            "Lihat",
+                            style: TextStyle(
+                              fontSize: _f(11),
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ],
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF1E3A5F),
+                            side: const BorderSide(color: Color(0xFFE2E8F0)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(_w(0.02)),
+                            ),
+                            padding: EdgeInsets.symmetric(vertical: _w(0.025)),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: _w(0.03)),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _downloadDocument(doc),
+                          icon: Icon(Icons.download_rounded, size: _f(16)),
+                          label: Text(
+                            "Unduh",
+                            style: TextStyle(
+                              fontSize: _f(11),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: color,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(_w(0.02)),
+                            ),
+                            padding: EdgeInsets.symmetric(vertical: _w(0.025)),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -994,72 +1140,7 @@ class _DashboardPageState extends State<DashboardPage> {
               ],
             ),
           ),
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFFAFBFC),
-              borderRadius: BorderRadius.vertical(
-                bottom: Radius.circular(_w(0.04)),
-              ),
-              border: Border(
-                top: BorderSide(color: Colors.grey.withOpacity(0.08), width: 1),
-              ),
-            ),
-            padding: EdgeInsets.fromLTRB(
-              _w(0.04),
-              _w(0.025),
-              _w(0.04),
-              _w(0.03),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {},
-                    icon: Icon(Icons.visibility_outlined, size: _f(16)),
-                    label: Text(
-                      "Lihat",
-                      style: TextStyle(
-                        fontSize: _f(11),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF1E3A5F),
-                      side: const BorderSide(color: Color(0xFFE2E8F0)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(_w(0.02)),
-                      ),
-                      padding: EdgeInsets.symmetric(vertical: _w(0.025)),
-                    ),
-                  ),
-                ),
-                SizedBox(width: _w(0.03)),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: Icon(Icons.download_rounded, size: _f(16)),
-                    label: Text(
-                      "Unduh",
-                      style: TextStyle(
-                        fontSize: _f(11),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: doc['color'] as Color,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(_w(0.02)),
-                      ),
-                      padding: EdgeInsets.symmetric(vertical: _w(0.025)),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

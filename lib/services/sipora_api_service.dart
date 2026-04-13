@@ -6,6 +6,8 @@ class SiporaApiService {
 
   final LocalhostApiService _client;
 
+  Uri resolveFileUri(String filePath) => _client.resolveFileUri(filePath);
+
   Future<Map<String, dynamic>> fetchDashboard() {
     return _client.get('sipora_api.php', query: {'action': 'dashboard'});
   }

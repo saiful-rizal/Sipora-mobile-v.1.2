@@ -1,8 +1,10 @@
 import 'dart:ui';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/document_format_screening_service.dart';
 import '../services/sipora_api_service.dart';
 
 class UploadPage extends StatefulWidget {
@@ -16,11 +18,17 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
   final SiporaApiService _apiService = SiporaApiService();
+  final DocumentFormatScreeningService _formatScreeningService =
+      DocumentFormatScreeningService();
 
   // ═══ File Utama ═══
   String? _namaFileUtama;
+  Uint8List? _bytesFileUtama;
   int _ukuranFileUtama = 0;
   bool _hasFileUtama = false;
+  bool _isScreeningFormat = false;
+  DocumentFormatScreeningResult? _screeningResult;
+  String? _screeningError;
 
   // ═══ File Turnitin ═══
   String? _namaFileTurnitin;
@@ -169,6 +177,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'doc', 'docx'],
+      withData: true,
     );
     if (result != null) {
       final f = result.files.single;
@@ -178,8 +187,93 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
       }
       setState(() {
         _namaFileUtama = f.name;
+        _bytesFileUtama = f.bytes;
         _ukuranFileUtama = f.size;
         _hasFileUtama = true;
+        _isScreeningFormat = false;
+        _screeningResult = null;
+        _screeningError = null;
+      });
+
+      await _runFormatScreeningIfNeeded();
+    }
+  }
+
+  Future<void> _onTipeDokumenChanged(String? val) async {
+    setState(() => _selectedTipe = val);
+    await _runFormatScreeningIfNeeded();
+  }
+
+  bool _isWordFile(String? fileName) {
+    if (fileName == null) return false;
+    return _formatScreeningService.isWordDocument(fileName);
+  }
+
+  Future<void> _runFormatScreeningIfNeeded() async {
+    if (!_hasFileUtama || _selectedTipe == null || _namaFileUtama == null) {
+      return;
+    }
+
+    if (!_isWordFile(_namaFileUtama)) {
+      if (!mounted) return;
+      setState(() {
+        _isScreeningFormat = false;
+        _screeningResult = null;
+        _screeningError =
+            'Screening format otomatis hanya dijalankan untuk dokumen Word.';
+      });
+      return;
+    }
+
+    if (!_formatScreeningService.canScreenWordDocument(_namaFileUtama!)) {
+      if (!mounted) return;
+      setState(() {
+        _isScreeningFormat = false;
+        _screeningResult = null;
+        _screeningError =
+            'File .doc belum bisa discreening otomatis. Gunakan format .docx.';
+      });
+      return;
+    }
+
+    if (_bytesFileUtama == null) {
+      if (!mounted) return;
+      setState(() {
+        _isScreeningFormat = false;
+        _screeningResult = null;
+        _screeningError =
+            'Tidak dapat membaca isi file. Pilih ulang file agar bisa discreening.';
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isScreeningFormat = true;
+      _screeningResult = null;
+      _screeningError = null;
+    });
+
+    try {
+      final result = _formatScreeningService.screenDocx(
+        bytes: _bytesFileUtama!,
+        fileName: _namaFileUtama!,
+        tipeDokumen: _selectedTipe!,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _isScreeningFormat = false;
+        _screeningResult = result;
+        _screeningError = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isScreeningFormat = false;
+        _screeningResult = null;
+        _screeningError =
+            'Screening format gagal diproses. Pastikan file DOCX tidak rusak.';
       });
     }
   }
@@ -205,8 +299,12 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
 
   void _removeFileUtama() => setState(() {
     _namaFileUtama = null;
+    _bytesFileUtama = null;
     _ukuranFileUtama = 0;
     _hasFileUtama = false;
+    _isScreeningFormat = false;
+    _screeningResult = null;
+    _screeningError = null;
   });
 
   void _removeFileTurnitin() => setState(() {
@@ -241,6 +339,25 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
           _selectedTema == null) {
         _showSnackBar('Semua pilihan dropdown wajib diisi.');
         return;
+      }
+
+      if (_isWordFile(_namaFileUtama)) {
+        if (_isScreeningFormat) {
+          _showSnackBar('Screening format sedang berjalan, tunggu sebentar.');
+          return;
+        }
+
+        if (_screeningError != null) {
+          _showSnackBar(_screeningError!);
+          return;
+        }
+
+        if (_screeningResult == null || !_screeningResult!.passed) {
+          _showSnackBar(
+            'Format dokumen belum sesuai. Perbaiki format lalu upload ulang.',
+          );
+          return;
+        }
       }
 
       setState(() => _isLoading = true);
@@ -350,11 +467,15 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   void _resetForm() {
     setState(() {
       _namaFileUtama = null;
+      _bytesFileUtama = null;
       _ukuranFileUtama = 0;
       _hasFileUtama = false;
       _namaFileTurnitin = null;
       _ukuranFileTurnitin = 0;
       _hasFileTurnitin = false;
+      _isScreeningFormat = false;
+      _screeningResult = null;
+      _screeningError = null;
       _judulController.clear();
       _abstrakController.clear();
       _penulisController.clear();
@@ -676,6 +797,8 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                           iconColor: const Color(0xFF757575),
                           onRemove: _removeFileUtama,
                         ),
+                        SizedBox(height: _getWidth(0.02)),
+                        _buildFormatScreeningPanel(),
                       ],
                     ],
                   ),
@@ -999,6 +1122,116 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildFormatScreeningPanel() {
+    final hasType = _selectedTipe != null;
+    final baseColor = _screeningResult == null
+        ? const Color(0xFFE3F2FD)
+        : _screeningResult!.passed
+        ? const Color(0xFFE8F5E9)
+        : const Color(0xFFFFEBEE);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(_getWidth(0.03)),
+      decoration: BoxDecoration(
+        color: baseColor,
+        borderRadius: BorderRadius.circular(_getWidth(0.02)),
+        border: Border.all(
+          color: _screeningResult == null
+              ? const Color(0xFFBBDEFB)
+              : _screeningResult!.passed
+              ? const Color(0xFFA5D6A7)
+              : const Color(0xFFEF9A9A),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Screening Format Dokumen',
+            style: GoogleFonts.outfit(
+              fontSize: _getFontSize(13),
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF1E3A5F),
+            ),
+          ),
+          SizedBox(height: _getWidth(0.012)),
+          if (!hasType)
+            Text(
+              'Pilih Jenis Dokumen terlebih dahulu agar aturan format bisa diterapkan.',
+              style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
+            ),
+          if (hasType && _isScreeningFormat) ...[
+            Row(
+              children: [
+                SizedBox(
+                  width: _getWidth(0.04),
+                  height: _getWidth(0.04),
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: _getWidth(0.02)),
+                Expanded(
+                  child: Text(
+                    'Sedang screening format file Word...',
+                    style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (hasType && _screeningError != null)
+            Text(
+              _screeningError!,
+              style: GoogleFonts.outfit(
+                fontSize: _getFontSize(11),
+                color: const Color(0xFFC62828),
+              ),
+            ),
+          if (hasType && _screeningResult != null) ...[
+            Row(
+              children: [
+                Icon(
+                  _screeningResult!.passed
+                      ? Icons.verified_rounded
+                      : Icons.warning_amber_rounded,
+                  color: _screeningResult!.passed
+                      ? const Color(0xFF2E7D32)
+                      : const Color(0xFFC62828),
+                  size: _getFontSize(18),
+                ),
+                SizedBox(width: _getWidth(0.015)),
+                Expanded(
+                  child: Text(
+                    _screeningResult!.summary,
+                    style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: _getWidth(0.01)),
+            Text(
+              'Skor: ${_screeningResult!.score.toStringAsFixed(0)} | Heading: ${_screeningResult!.headingCount} | Rata kanan-kiri: ${(_screeningResult!.justifiedBodyRatio * 100).toStringAsFixed(1)}%',
+              style: GoogleFonts.outfit(
+                fontSize: _getFontSize(11),
+                color: const Color(0xFF37474F),
+              ),
+            ),
+            SizedBox(height: _getWidth(0.008)),
+            ..._screeningResult!.checks.map(
+              (c) => Padding(
+                padding: EdgeInsets.only(bottom: _getWidth(0.005)),
+                child: Text(
+                  '- $c',
+                  style: GoogleFonts.outfit(fontSize: _getFontSize(10.8)),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   // ══════════════════════════════════════════════════════════
   //  CARD INFORMASI DOKUMEN
   // ══════════════════════════════════════════════════════════
@@ -1051,7 +1284,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                       "Jenis Dokumen",
                       _selectedTipe,
                       _tipeDokumen,
-                      (val) => setState(() => _selectedTipe = val),
+                      _onTipeDokumenChanged,
                     ),
                   ),
                   SizedBox(width: _getWidth(0.03)),

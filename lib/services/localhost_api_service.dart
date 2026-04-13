@@ -33,6 +33,24 @@ class LocalhostApiService {
     return 'http://localhost/sipora_api';
   }
 
+  Uri resolveFileUri(String filePath) {
+    final trimmed = filePath.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('filePath cannot be empty');
+    }
+
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed;
+    }
+
+    final base = _baseUrl.endsWith('/') ? _baseUrl : '$_baseUrl/';
+    final relativePath = trimmed.startsWith('/')
+        ? trimmed.substring(1)
+        : trimmed;
+    return Uri.parse(base).resolve(relativePath);
+  }
+
   Uri _uri(String endpoint, [Map<String, dynamic>? query]) {
     final cleanEndpoint = endpoint.startsWith('/')
         ? endpoint.substring(1)

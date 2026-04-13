@@ -97,6 +97,7 @@ switch ($action) {
             SELECT
                 d.dokumen_id,
                 d.judul,
+                d.file_path,
                 DATE_FORMAT(d.tgl_unggah, '%d %b %Y') AS tanggal,
                 COALESCE(msd.nama_status, 'Dokumen') AS kategori,
                 COALESCE(u.nama_lengkap, 'Unknown') AS uploader,
@@ -122,7 +123,8 @@ switch ($action) {
                 'author' => $row['uploader'],
                 'downloads' => (int)$row['author_count'],
                 'date' => $row['tanggal'] ?? '-',
-                'category' => $row['kategori']
+                'category' => $row['kategori'],
+                'file_path' => $row['file_path'] ?? ''
             ];
         }
 
@@ -146,6 +148,7 @@ switch ($action) {
             SELECT
                 d.dokumen_id,
                 d.judul,
+                d.file_path,
                 DATE_FORMAT(d.tgl_unggah, '%d %M %Y') AS tanggal,
                 COALESCE(msd.nama_status, 'Dokumen') AS tipe,
                 COALESCE(mj.nama_jurusan, '-') AS jurusan,
@@ -196,7 +199,8 @@ switch ($action) {
                 'downloads' => (int)$row['downloads'],
                 'type' => $row['tipe'],
                 'status' => $row['jurusan'],
-                'prodi' => $row['prodi']
+                'prodi' => $row['prodi'],
+                'file_path' => $row['file_path'] ?? ''
             ];
         }
 
@@ -266,6 +270,7 @@ switch ($action) {
             SELECT
                 d.dokumen_id,
                 d.judul,
+                d.file_path,
                 COALESCE(u.nama_lengkap, '-') AS author,
                 DATE_FORMAT(d.tgl_unggah, '%d %M %Y') AS tanggal,
                 COALESCE(msd.nama_status, 'Dokumen') AS kategori
@@ -292,7 +297,8 @@ switch ($action) {
                 'title' => $row['judul'],
                 'author' => $row['author'],
                 'date' => $row['tanggal'],
-                'category' => $row['kategori']
+                'category' => $row['kategori'],
+                'file_path' => $row['file_path'] ?? ''
             ];
         }
 
