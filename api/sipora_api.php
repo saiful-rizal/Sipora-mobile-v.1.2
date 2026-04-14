@@ -86,6 +86,53 @@ function find_id_by_name(mysqli $conn, string $table, string $idCol, string $nam
     return $row ? (int)$row[$idCol] : null;
 }
 
+function sanitize_file_stem(string $value): string
+{
+    $stem = strtolower(trim($value));
+    $stem = preg_replace('/[^a-z0-9_-]+/', '-', $stem) ?? '';
+    $stem = trim($stem, '-_');
+    return $stem;
+}
+
+function store_document_file(string $base64Content, string $originalFileName): string
+{
+    $binary = base64_decode($base64Content, true);
+    if ($binary === false) {
+        fail_response('Isi file dokumen tidak valid');
+    }
+
+    $extension = strtolower(pathinfo($originalFileName, PATHINFO_EXTENSION));
+    if (!in_array($extension, ['doc', 'docx'], true)) {
+        fail_response('Format file utama harus DOC atau DOCX');
+    }
+
+    $stem = sanitize_file_stem(pathinfo($originalFileName, PATHINFO_FILENAME));
+    if ($stem === '') {
+        $stem = 'dokumen';
+    }
+
+    try {
+        $suffix = bin2hex(random_bytes(4));
+    } catch (Exception $e) {
+        $suffix = (string)mt_rand(1000, 9999);
+    }
+
+    $fileName = $stem . '-' . date('YmdHis') . '-' . $suffix . '.' . $extension;
+    $relativePath = 'uploads/doc/' . $fileName;
+    $targetPath = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+    $targetDir = dirname($targetPath);
+
+    if (!is_dir($targetDir) && !mkdir($targetDir, 0777, true) && !is_dir($targetDir)) {
+        fail_response('Gagal membuat folder penyimpanan dokumen', 500);
+    }
+
+    if (file_put_contents($targetPath, $binary) === false) {
+        fail_response('Gagal menyimpan file dokumen', 500);
+    }
+
+    return $relativePath;
+}
+
 switch ($action) {
     case 'dashboard':
         $totalDokumen = (int)scalar_query($conn, 'SELECT COUNT(*) FROM dokumen');
@@ -128,6 +175,44 @@ switch ($action) {
             ];
         }
 
+        $topTopics = [];
+        $topicSql = "
+            SELECT keyword, COUNT(*) AS total
+            FROM search_history
+            WHERE keyword IS NOT NULL AND TRIM(keyword) <> ''
+            GROUP BY keyword
+            ORDER BY total DESC, keyword ASC
+            LIMIT 10
+        ";
+        $topicResult = $conn->query($topicSql);
+        if ($topicResult) {
+            while ($topic = $topicResult->fetch_assoc()) {
+                $topTopics[] = [
+                    'topic' => $topic['keyword'],
+                    'count' => (int)$topic['total']
+                ];
+            }
+        }
+
+        if (count($topTopics) === 0) {
+            $fallbackSql = "
+                SELECT keyword, search_count AS total
+                FROM trending_keywords
+                WHERE keyword IS NOT NULL AND TRIM(keyword) <> ''
+                ORDER BY search_count DESC, keyword ASC
+                LIMIT 10
+            ";
+            $fallbackResult = $conn->query($fallbackSql);
+            if ($fallbackResult) {
+                while ($topic = $fallbackResult->fetch_assoc()) {
+                    $topTopics[] = [
+                        'topic' => $topic['keyword'],
+                        'count' => (int)$topic['total']
+                    ];
+                }
+            }
+        }
+
         success_response([
             'stats' => [
                 'total_dokumen' => $totalDokumen,
@@ -135,7 +220,8 @@ switch ($action) {
                 'upload_baru' => $uploadBaru,
                 'total_penulis' => $totalPenulis
             ],
-            'recent_documents' => $recent
+            'recent_documents' => $recent,
+            'top_topics' => $topTopics
         ]);
         break;
 
@@ -450,7 +536,9 @@ switch ($action) {
         $input = read_json_input();
         $judul = trim(($input['judul'] ?? '') . '');
         $abstrak = trim(($input['abstrak'] ?? '') . '');
-        $filePath = trim(($input['file_path'] ?? '') . '');
+        $filePathInput = trim(($input['file_path'] ?? '') . '');
+        $originalFileName = trim(($input['original_file_name'] ?? $filePathInput) . '');
+        $fileBytesBase64 = trim(($input['file_bytes_base64'] ?? '') . '');
         $uploaderId = (int)($input['uploader_id'] ?? 1);
         $tahun = trim(($input['tahun'] ?? '') . '');
         $jurusan = trim(($input['jurusan'] ?? '') . '');
@@ -462,8 +550,13 @@ switch ($action) {
         $penulis = is_array($input['penulis'] ?? null) ? $input['penulis'] : [];
         $turnitin = (int)($input['turnitin'] ?? 0);
 
-        if ($judul === '' || $filePath === '') {
+        if ($judul === '' || $originalFileName === '') {
             fail_response('Judul dan file dokumen wajib diisi');
+        }
+
+        $filePath = $filePathInput;
+        if ($fileBytesBase64 !== '') {
+            $filePath = store_document_file($fileBytesBase64, $originalFileName);
         }
 
         $yearId = 0;

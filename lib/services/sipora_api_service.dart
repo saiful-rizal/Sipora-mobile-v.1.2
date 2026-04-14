@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'localhost_api_service.dart';
 
 class SiporaApiService {
@@ -84,6 +86,7 @@ class SiporaApiService {
     required String judul,
     required String abstrak,
     required String filePath,
+    required List<int> fileBytes,
     required String tahun,
     required String jurusan,
     required String prodi,
@@ -103,6 +106,8 @@ class SiporaApiService {
         'judul': judul,
         'abstrak': abstrak,
         'file_path': filePath,
+        'original_file_name': filePath,
+        'file_bytes_base64': base64Encode(fileBytes),
         'tahun': tahun,
         'jurusan': jurusan,
         'prodi': prodi,

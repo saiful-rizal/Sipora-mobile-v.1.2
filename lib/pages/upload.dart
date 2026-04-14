@@ -176,7 +176,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   Future<void> _pickFileUtama() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf', 'doc', 'docx'],
+      allowedExtensions: ['doc', 'docx'],
       withData: true,
     );
     if (result != null) {
@@ -368,6 +368,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
           judul: _judulController.text.trim(),
           abstrak: _abstrakController.text.trim(),
           filePath: _namaFileUtama ?? '',
+          fileBytes: _bytesFileUtama!,
           tahun: _selectedTahun!,
           jurusan: _selectedJurusan!,
           prodi: _selectedProdi!,
@@ -755,7 +756,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                       ),
                       SizedBox(height: _getWidth(0.005)),
                       Text(
-                        "PDF, DOC, DOCX (Maksimal 10MB)",
+                        "DOC, DOCX (Maksimal 10MB)",
                         style: TextStyle(
                           fontSize: _getFontSize(11),
                           color: const Color(0xFF888888),

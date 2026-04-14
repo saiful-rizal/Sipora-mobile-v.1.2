@@ -38,28 +38,12 @@ class _DashboardPageState extends State<DashboardPage> {
       'color': const Color(0xFF4F46E5),
     },
     {
-      'title': 'Pengguna Aktif',
-      'value': '1.231',
-      'change': '-0.9%',
-      'isPositive': false,
-      'icon': Icons.people_outline,
-      'color': const Color(0xFFF59E0B),
-    },
-    {
-      'title': 'Upload Baru',
+      'title': 'Upload Hari Ini',
       'value': '108',
       'change': '+12%',
       'isPositive': true,
       'icon': Icons.upload_outlined,
       'color': const Color(0xFFEF4444),
-    },
-    {
-      'title': 'Kutipan',
-      'value': '534',
-      'change': '+8%',
-      'isPositive': true,
-      'icon': Icons.format_quote_outlined,
-      'color': const Color(0xFF10B981),
     },
   ];
 
@@ -111,6 +95,12 @@ class _DashboardPageState extends State<DashboardPage> {
     },
   ];
 
+  List<Map<String, dynamic>> _topTopics = [
+    {'topic': 'Machine Learning', 'count': 12},
+    {'topic': 'IoT', 'count': 10},
+    {'topic': 'Data Mining', 'count': 8},
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -124,6 +114,7 @@ class _DashboardPageState extends State<DashboardPage> {
         (response['stats'] as Map?) ?? const {},
       );
       final recent = (response['recent_documents'] as List?) ?? const [];
+      final topTopicsRaw = (response['top_topics'] as List?) ?? const [];
 
       final mappedStats = [
         {
@@ -135,28 +126,12 @@ class _DashboardPageState extends State<DashboardPage> {
           'color': const Color(0xFF4F46E5),
         },
         {
-          'title': 'Pengguna Aktif',
-          'value': '${stats['pengguna_aktif'] ?? 0}',
-          'change': 'DB',
-          'isPositive': true,
-          'icon': Icons.people_outline,
-          'color': const Color(0xFFF59E0B),
-        },
-        {
           'title': 'Upload Hari Ini',
           'value': '${stats['upload_baru'] ?? 0}',
           'change': 'DB',
           'isPositive': true,
           'icon': Icons.upload_outlined,
           'color': const Color(0xFFEF4444),
-        },
-        {
-          'title': 'Total Penulis',
-          'value': '${stats['total_penulis'] ?? 0}',
-          'change': 'DB',
-          'isPositive': true,
-          'icon': Icons.format_quote_outlined,
-          'color': const Color(0xFF10B981),
         },
       ];
 
@@ -173,10 +148,24 @@ class _DashboardPageState extends State<DashboardPage> {
         };
       }).toList();
 
+      final mappedTopics = topTopicsRaw
+          .map((item) {
+            final topic = Map<String, dynamic>.from(item as Map);
+            return {
+              'topic': (topic['topic'] ?? '').toString(),
+              'count': (topic['count'] ?? 0) is int
+                  ? (topic['count'] ?? 0) as int
+                  : int.tryParse((topic['count'] ?? '0').toString()) ?? 0,
+            };
+          })
+          .where((item) => (item['topic'] as String).trim().isNotEmpty)
+          .toList();
+
       if (!mounted) return;
       setState(() {
         _stats = mappedStats;
         _documents = mappedDocs.isEmpty ? _documents : mappedDocs;
+        _topTopics = mappedTopics.isEmpty ? _topTopics : mappedTopics;
         _isLoading = false;
       });
     } catch (_) {
@@ -269,11 +258,13 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(height: _w(0.004)),
+                    SizedBox(height: _w(0.01)),
                     _isLoading
                         ? const Center(child: CircularProgressIndicator())
                         : _buildStatsGrid(),
                     SizedBox(height: _w(0.04)),
+                    _buildTopTopicRecommendations(),
+                    SizedBox(height: _w(0.05)),
                     _buildRecentDocuments(),
                     SizedBox(height: _w(0.04)),
                   ],
@@ -294,12 +285,18 @@ class _DashboardPageState extends State<DashboardPage> {
       barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
-        final uploadHariIni = _stats.length > 2
-            ? _stats[2]['value'].toString()
-            : '0';
-        final totalDokumen = _stats.isNotEmpty
-            ? _stats[0]['value'].toString()
-            : '0';
+        final uploadHariIni = _stats
+            .firstWhere(
+              (item) => (item['title']?.toString() ?? '') == 'Upload Hari Ini',
+              orElse: () => {'value': '0'},
+            )['value']
+            .toString();
+        final totalDokumen = _stats
+            .firstWhere(
+              (item) => (item['title']?.toString() ?? '') == 'Total Dokumen',
+              orElse: () => {'value': '0'},
+            )['value']
+            .toString();
 
         return Center(
           child: Material(
@@ -480,6 +477,82 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildTopTopicRecommendations() {
+    final shownTopics = _topTopics.take(10).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Rekomendasi Topik 10 Teratas',
+          style: TextStyle(
+            fontSize: _f(15),
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF1E3A5F),
+          ),
+        ),
+        SizedBox(height: _w(0.02)),
+        Wrap(
+          spacing: _w(0.02),
+          runSpacing: _w(0.02),
+          children: List.generate(shownTopics.length, (index) {
+            final topic = shownTopics[index];
+            return Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: _w(0.025),
+                vertical: _w(0.015),
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(_w(0.03)),
+                border: Border.all(color: const Color(0xFFE5ECF6)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: _w(0.05),
+                    height: _w(0.05),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEEF4FF),
+                      borderRadius: BorderRadius.circular(_w(0.025)),
+                    ),
+                    child: Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        fontSize: _f(10),
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1E3A5F),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: _w(0.015)),
+                  Text(
+                    topic['topic'].toString(),
+                    style: TextStyle(
+                      fontSize: _f(11),
+                      color: const Color(0xFF1E3A5F),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(width: _w(0.012)),
+                  Text(
+                    '(${topic['count']})',
+                    style: TextStyle(
+                      fontSize: _f(10),
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+      ],
     );
   }
 
@@ -764,6 +837,7 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        SizedBox(height: _w(0.014)),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -879,31 +953,41 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Dokumen Terbaru',
-              style: TextStyle(
-                fontSize: _f(16),
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF1E3A5F),
-              ),
-            ),
-            TextButton(
-              onPressed: () {},
-              child: Text(
-                'Lihat Semua',
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: _w(0.005)),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Dokumen Terbaru',
                 style: TextStyle(
-                  color: const Color(0xFF4F46E5),
-                  fontSize: _f(11),
+                  fontSize: _f(16),
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF1E3A5F),
                 ),
               ),
-            ),
-          ],
+              TextButton(
+                onPressed: () {},
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: Text(
+                  'Lihat Semua',
+                  style: TextStyle(
+                    color: const Color(0xFF4F46E5),
+                    fontSize: _f(11),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        SizedBox(height: _w(0.002)),
+        SizedBox(height: _w(0.004)),
         ListView.builder(
+          padding: EdgeInsets.zero,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: _documents.length,
