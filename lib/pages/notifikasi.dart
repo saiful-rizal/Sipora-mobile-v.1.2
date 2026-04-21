@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/app_session_service.dart';
 import '../services/notification_state.dart';
+import '../services/sipora_api_service.dart';
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -12,50 +14,63 @@ class _NotificationPageState extends State<NotificationPage> {
   static const Color _brand = Color(0xFF1565C0);
   static const Color _title = Color(0xFF1E3A5F);
 
-  final List<Map<String, dynamic>> _notifications = [
-    {
-      'title': 'Dokumen Berhasil Diunggah',
-      'message': 'File Skripsi_AI_2026.pdf berhasil diunggah.',
-      'time': '2 menit lalu',
-      'isRead': false,
-    },
-    {
-      'title': 'Status Review Diperbarui',
-      'message': 'Dokumen Anda sedang dalam proses validasi admin.',
-      'time': '1 jam lalu',
-      'isRead': false,
-    },
-    {
-      'title': 'Akun Disetujui',
-      'message': 'Akun Anda sudah aktif dan dapat mengakses semua fitur.',
-      'time': 'Kemarin',
-      'isRead': true,
-    },
-  ];
-
   @override
   void initState() {
     super.initState();
-    _syncUnreadCount();
+    NotificationState.initialize();
+    _loadNotificationsFromServer();
+  }
+
+  Future<void> _loadNotificationsFromServer() async {
+    final email = AppSessionService.currentEmail;
+    final userId = AppSessionService.currentUserId;
+    if (email == null && userId == null) {
+      return;
+    }
+
+    try {
+      final remoteNotifications = await SiporaApiService().fetchNotifications(
+        email: email,
+        userId: userId,
+      );
+
+      if (remoteNotifications.isEmpty) {
+        return;
+      }
+
+      final currentNotifications = NotificationState.notifications.value;
+      final merged = <Map<String, dynamic>>[];
+      final seenIds = <String>{};
+
+      for (final item in [...remoteNotifications, ...currentNotifications]) {
+        final id = item['id']?.toString() ?? '';
+        final stableId = id.isEmpty
+            ? '${item['title']}-${item['message']}'
+            : id;
+        if (seenIds.add(stableId)) {
+          merged.add(Map<String, dynamic>.from(item));
+        }
+      }
+
+      NotificationState.replaceAll(merged);
+    } catch (_) {
+      // Abaikan kegagalan sinkronisasi; state lokal tetap dipakai.
+    }
   }
 
   void _markAllAsRead() {
-    setState(() {
-      for (final item in _notifications) {
-        item['isRead'] = true;
-      }
-    });
-    _syncUnreadCount();
+    NotificationState.markAllAsRead();
   }
 
   void _deleteAll() {
-    setState(() => _notifications.clear());
-    _syncUnreadCount();
+    NotificationState.clearAll();
   }
 
   void _openNotification(Map<String, dynamic> item) {
-    setState(() => item['isRead'] = true);
-    _syncUnreadCount();
+    final id = item['id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      NotificationState.markAsReadById(id);
+    }
 
     showDialog<void>(
       context: context,
@@ -110,8 +125,7 @@ class _NotificationPageState extends State<NotificationPage> {
                 title: const Text('Hapus notifikasi ini'),
                 onTap: () {
                   Navigator.pop(context);
-                  setState(() => _notifications.removeAt(index));
-                  _syncUnreadCount();
+                  NotificationState.removeAt(index);
                 },
               ),
             ],
@@ -131,98 +145,110 @@ class _NotificationPageState extends State<NotificationPage> {
     }
   }
 
-  int get _unreadCount =>
-      _notifications.where((item) => item['isRead'] != true).length;
-
-  void _syncUnreadCount() {
-    NotificationState.setUnreadCount(_unreadCount);
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F9FC),
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.pop(context),
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-        ),
-        actions: [
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: _onTopMenuSelected,
-            itemBuilder: (context) => const [
-              PopupMenuItem<String>(
-                value: 'mark_all',
-                child: Text('Tandai telah dibaca semua'),
+    return ValueListenableBuilder<List<Map<String, dynamic>>>(
+      valueListenable: NotificationState.notifications,
+      builder: (context, notifications, _) {
+        final unreadCount = notifications
+            .where((item) => item['isRead'] != true)
+            .length;
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFF7F9FC),
+          appBar: AppBar(
+            leading: IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+            ),
+            actions: [
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                onSelected: _onTopMenuSelected,
+                itemBuilder: (context) => const [
+                  PopupMenuItem<String>(
+                    value: 'mark_all',
+                    child: Text('Tandai telah dibaca semua'),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'delete_all',
+                    child: Text('Hapus semua'),
+                  ),
+                ],
               ),
-              PopupMenuItem<String>(
-                value: 'delete_all',
-                child: Text('Hapus semua'),
+            ],
+            title: const Text(
+              'Notifikasi',
+              style: TextStyle(fontWeight: FontWeight.w700, color: _title),
+            ),
+            centerTitle: true,
+            backgroundColor: Colors.white,
+            foregroundColor: _title,
+            elevation: 0,
+          ),
+          body: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE8EEF6)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.mark_email_unread_outlined,
+                      color: _brand,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$unreadCount belum dibaca',
+                      style: const TextStyle(
+                        color: _title,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'Tekan lama untuk hapus',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: notifications.isEmpty
+                    ? _buildEmptyState()
+                    : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 2, 16, 16),
+                        itemCount: notifications.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final item = notifications[index];
+                          final isRead = item['isRead'] == true;
+                          return _buildNotificationCard(
+                            item: item,
+                            isRead: isRead,
+                            onTap: () => _openNotification(item),
+                            onLongPress: () => _showItemActions(index),
+                          );
+                        },
+                      ),
               ),
             ],
           ),
-        ],
-        title: const Text(
-          'Notifikasi',
-          style: TextStyle(fontWeight: FontWeight.w700, color: _title),
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.white,
-        foregroundColor: _title,
-        elevation: 0,
-      ),
-      body: Column(
-        children: [
-          Container(
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE8EEF6)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.mark_email_unread_outlined, color: _brand, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  '$_unreadCount belum dibaca',
-                  style: const TextStyle(
-                    color: _title,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  'Tekan lama untuk hapus',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _notifications.isEmpty
-                ? _buildEmptyState()
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 16),
-                    itemCount: _notifications.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final item = _notifications[index];
-                      final isRead = item['isRead'] == true;
-                      return _buildNotificationCard(
-                        item: item,
-                        isRead: isRead,
-                        onTap: () => _openNotification(item),
-                        onLongPress: () => _showItemActions(index),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 

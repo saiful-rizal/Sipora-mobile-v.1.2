@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'localhost_api_service.dart';
 
 class SiporaApiService {
@@ -62,6 +64,40 @@ class SiporaApiService {
     );
   }
 
+  Future<Map<String, dynamic>> registerPushToken({
+    required String token,
+    String? email,
+    int? userId,
+  }) {
+    return _client.post(
+      'sipora_api.php',
+      query: {'action': 'register_push_token'},
+      body: {
+        'token': token,
+        if (email != null && email.isNotEmpty) 'email': email,
+        if (userId != null) 'user_id': userId,
+        'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
+      },
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> fetchNotifications({
+    String? email,
+    int? userId,
+  }) async {
+    final response = await _client.get(
+      'sipora_api.php',
+      query: {
+        'action': 'notifications',
+        if (email != null && email.isNotEmpty) 'email': email,
+        if (userId != null) 'user_id': '$userId',
+      },
+    );
+
+    final items = (response['notifications'] as List?) ?? const [];
+    return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
   Future<Map<String, dynamic>> register({
     required String namaLengkap,
     required String nim,
@@ -98,6 +134,7 @@ class SiporaApiService {
     required int turnitin,
     String? turnitinFile,
     int uploaderId = 1,
+    String? uploaderEmail,
   }) {
     return _client.post(
       'sipora_api.php',
@@ -119,6 +156,24 @@ class SiporaApiService {
         'turnitin': turnitin,
         'turnitin_file': turnitinFile ?? '',
         'uploader_id': uploaderId,
+        if (uploaderEmail != null && uploaderEmail.isNotEmpty)
+          'uploader_email': uploaderEmail,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> screenDocument({
+    required String fileName,
+    required List<int> fileBytes,
+    required String tipeDokumen,
+  }) {
+    return _client.post(
+      'sipora_api.php',
+      query: {'action': 'screen_document'},
+      body: {
+        'original_file_name': fileName,
+        'file_bytes_base64': base64Encode(fileBytes),
+        'tipe_dokumen': tipeDokumen,
       },
     );
   }

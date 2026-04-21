@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'register.dart';
-import '../widgets/smart_navbar.dart';
-import '../services/sipora_api_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:get/get.dart';
+
+import '../app/routes/app_routes.dart';
+import '../controllers/login_controller.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -13,8 +15,7 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
   bool _obscurePassword = true;
-  bool _isLoading = false;
-  final SiporaApiService _apiService = SiporaApiService();
+  final LoginController _loginController = Get.find<LoginController>();
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -29,17 +30,48 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
 
   Future<void> _handleLogin() async {
     if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
-      try {
-        await _apiService.login(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
-        if (mounted) _showSuccessDialog();
-      } catch (_) {
-        if (mounted) _showErrorDialog();
+      final bool success = await _loginController.loginWithEmailPassword(
+        email: _emailController.text,
+        password: _passwordController.text,
+      );
+      if (!mounted) return;
+      if (success) {
+        _showSuccessDialog();
+      } else {
+        _showErrorDialog();
       }
-      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handleGoogleSignIn() async {
+    try {
+      await _loginController.signInWithGoogle();
+      if (!mounted) return;
+      Get.offAllNamed(AppRoutes.shell);
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.message ?? 'Sign in Google gagal. Coba lagi.',
+            style: GoogleFonts.outfit(),
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Sign in Google gagal. Periksa koneksi dan konfigurasi Firebase.',
+            style: GoogleFonts.outfit(),
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -165,21 +197,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                 ),
                 onPressed: () {
                   Navigator.pop(context);
-                  Navigator.pushReplacement(
-                    context,
-                    PageRouteBuilder(
-                      pageBuilder: (_, _, _) =>
-                          const MainShell(), // ← UBAH DI SINI
-                      transitionsBuilder: (_, anim, _, child) => FadeTransition(
-                        opacity: CurvedAnimation(
-                          parent: anim,
-                          curve: Curves.easeInOut,
-                        ),
-                        child: child,
-                      ),
-                      transitionDuration: const Duration(milliseconds: 500),
-                    ),
-                  );
+                  Get.offAllNamed(AppRoutes.shell);
                 },
                 child: Text(
                   'Lanjutkan ke Aplikasi',
@@ -878,39 +896,43 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
               ),
             ),
             const SizedBox(height: 4),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1565C0),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+            Obx(
+              () => SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1565C0),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                    shadowColor: const Color(0xFF1565C0).withOpacity(0.4),
                   ),
-                  elevation: 0,
-                  shadowColor: const Color(0xFF1565C0).withOpacity(0.4),
-                ),
-                onPressed: _isLoading ? null : _handleLogin,
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
+                  onPressed: _loginController.isLoading.value
+                      ? null
+                      : _handleLogin,
+                  child: _loginController.isLoading.value
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : Text(
+                          'MASUK',
+                          style: GoogleFonts.outfit(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                            letterSpacing: 1.5,
                           ),
                         ),
-                      )
-                    : Text(
-                        'MASUK',
-                        style: GoogleFonts.outfit(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
+                ),
               ),
             ),
             const SizedBox(height: 22),
@@ -935,12 +957,53 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
               ],
             ),
             const SizedBox(height: 18),
+            Obx(
+              () => SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton.icon(
+                  onPressed: _loginController.isGoogleLoading.value
+                      ? null
+                      : _handleGoogleSignIn,
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    backgroundColor: Colors.white,
+                  ),
+                  icon: _loginController.isGoogleLoading.value
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.grey.shade700,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.g_mobiledata_rounded,
+                          color: Color(0xFFDB4437),
+                          size: 26,
+                        ),
+                  label: Text(
+                    _loginController.isGoogleLoading.value
+                        ? 'Memproses...'
+                        : 'MASUK DENGAN GOOGLE',
+                    style: GoogleFonts.outfit(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                      color: const Color(0xFF0D2137),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             Center(
               child: GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const RegisterPage()),
-                ),
+                onTap: () => Get.toNamed(AppRoutes.register),
                 child: RichText(
                   text: TextSpan(
                     text: 'Belum punya akun? ',

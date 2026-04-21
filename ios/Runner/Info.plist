@@ -47,5 +47,9 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Aplikasi memerlukan kamera untuk mengambil foto profile.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aplikasi memerlukan akses foto untuk memilih foto profile pribadi dari galeri.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Aplikasi memerlukan akses foto untuk menyimpan hasil foto profile jika diperlukan.</string>
 </dict>
 </plist>

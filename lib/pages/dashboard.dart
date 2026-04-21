@@ -1,8 +1,15 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../app/routes/app_routes.dart';
+import '../services/app_session_service.dart';
+import '../services/google_auth_service.dart';
+import '../services/push_notification_service.dart';
 import '../services/sipora_api_service.dart';
 import 'dokumen_semua_page.dart';
 import 'notifikasi.dart';
@@ -198,10 +205,16 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _requestProfilePhoto() async {
+  bool get _cameraSupported {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  Future<void> _requestProfilePhoto({required ImageSource source}) async {
     try {
       final photo = await _imagePicker.pickImage(
-        source: ImageSource.camera,
+        source: source,
         preferredCameraDevice: CameraDevice.front,
         imageQuality: 85,
       );
@@ -214,9 +227,112 @@ class _DashboardPageState extends State<DashboardPage> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kamera tidak dapat dibuka')),
+        SnackBar(
+          content: Text(
+            source == ImageSource.camera
+                ? 'Kamera tidak dapat dibuka'
+                : 'Galeri tidak dapat dibuka',
+          ),
+        ),
       );
     }
+  }
+
+  Future<void> _requestCameraProfilePhoto() async {
+    if (!mounted) return;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text('Akses Kamera Dibutuhkan'),
+          content: const Text(
+            'SIPORA akan menggunakan kamera untuk mengambil foto profil pribadi Anda. Lanjutkan untuk memberi izin kamera.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Lanjutkan'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (proceed == true) {
+      await _requestProfilePhoto(source: ImageSource.camera);
+    }
+  }
+
+  Future<void> _showProfilePhotoSourcePicker() async {
+    if (!_cameraSupported) {
+      await _requestProfilePhoto(source: ImageSource.gallery);
+      return;
+    }
+
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Ambil Foto Pribadi'),
+                subtitle: const Text('Minta izin kamera lalu foto profil Anda'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _requestCameraProfilePhoto();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Pilih Dari Galeri'),
+                subtitle: const Text('Pilih foto pribadi dari perangkat'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _requestProfilePhoto(source: ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleLogout() async {
+    try {
+      await GoogleAuthService().signOut();
+    } catch (_) {
+      // Tetap lanjut ke login walau sesi Google tidak aktif.
+    }
+
+    AppSessionService.clear();
+    await PushNotificationService.clearCurrentDeviceToken();
+
+    if (!mounted) return;
+    Get.offAllNamed(AppRoutes.login);
+  }
+
+  String _statValueByTitle(String title) {
+    for (final item in _stats) {
+      if ((item['title']?.toString() ?? '') == title) {
+        return (item['value'] ?? '0').toString();
+      }
+    }
+    return '0';
   }
 
   void _openDocumentDetail(Map<String, dynamic> doc) {
@@ -285,18 +401,8 @@ class _DashboardPageState extends State<DashboardPage> {
       barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
-        final uploadHariIni = _stats
-            .firstWhere(
-              (item) => (item['title']?.toString() ?? '') == 'Upload Hari Ini',
-              orElse: () => {'value': '0'},
-            )['value']
-            .toString();
-        final totalDokumen = _stats
-            .firstWhere(
-              (item) => (item['title']?.toString() ?? '') == 'Total Dokumen',
-              orElse: () => {'value': '0'},
-            )['value']
-            .toString();
+        final uploadHariIni = _statValueByTitle('Upload Hari Ini');
+        final totalDokumen = _statValueByTitle('Total Dokumen');
 
         return Center(
           child: Material(
@@ -331,7 +437,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       children: [
                         _buildProfileAvatar(
                           size: _w(0.16),
-                          onTap: _requestProfilePhoto,
+                          onTap: _showProfilePhotoSourcePicker,
                           showCameraBadge: true,
                         ),
                         SizedBox(width: _w(0.03)),
@@ -443,21 +549,43 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                     SizedBox(height: _w(0.05)),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1E3A5F),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _handleLogout();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFC62828),
+                              side: const BorderSide(color: Color(0xFFC62828)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                            icon: const Icon(Icons.logout_rounded, size: 18),
+                            label: const Text('Logout'),
                           ),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
-                        child: const Text('Tutup'),
-                      ),
+                        SizedBox(width: _w(0.025)),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1E3A5F),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                            child: const Text('Tutup'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

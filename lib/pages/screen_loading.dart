@@ -1,14 +1,16 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'login.dart'; 
+
+import '../app/routes/app_routes.dart';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
 
   @override
-  _LoadingScreenState createState() => _LoadingScreenState();
+  State<LoadingScreen> createState() => _LoadingScreenState();
 }
 
 class _LoadingScreenState extends State<LoadingScreen>
@@ -82,17 +84,7 @@ class _LoadingScreenState extends State<LoadingScreen>
     await Future.delayed(const Duration(milliseconds: 400));
 
     // UBAH: Arahkan ke LoginPage (bukan MainPage)
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, _, _) => const LoginPage(),
-        transitionsBuilder: (_, anim, _, child) => FadeTransition(
-          opacity: CurvedAnimation(parent: anim, curve: Curves.easeInOut),
-          child: child,
-        ),
-        transitionDuration: const Duration(milliseconds: 650),
-      ),
-    );
+    Get.offAllNamed(AppRoutes.login);
   }
 
   @override

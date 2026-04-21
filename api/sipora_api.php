@@ -102,8 +102,8 @@ function store_document_file(string $base64Content, string $originalFileName): s
     }
 
     $extension = strtolower(pathinfo($originalFileName, PATHINFO_EXTENSION));
-    if (!in_array($extension, ['doc', 'docx'], true)) {
-        fail_response('Format file utama harus DOC atau DOCX');
+    if (!in_array($extension, ['docx', 'pdf'], true)) {
+        fail_response('Format file utama harus DOCX atau PDF');
     }
 
     $stem = sanitize_file_stem(pathinfo($originalFileName, PATHINFO_FILENAME));
@@ -133,11 +133,338 @@ function store_document_file(string $base64Content, string $originalFileName): s
     return $relativePath;
 }
 
+function create_temp_screening_file(string $base64Content, string $originalFileName): string
+{
+    $binary = base64_decode($base64Content, true);
+    if ($binary === false) {
+        fail_response('Isi file screening tidak valid');
+    }
+
+    $extension = strtolower(pathinfo($originalFileName, PATHINFO_EXTENSION));
+    if (!in_array($extension, ['docx', 'pdf'], true)) {
+        fail_response('Screening hanya mendukung DOCX dan PDF');
+    }
+
+    $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sipora_screening';
+    if (!is_dir($tmpDir) && !mkdir($tmpDir, 0777, true) && !is_dir($tmpDir)) {
+        fail_response('Gagal membuat direktori sementara screening', 500);
+    }
+
+    $fileName = 'screen-' . date('YmdHis') . '-' . mt_rand(1000, 9999) . '.' . $extension;
+    $tmpPath = $tmpDir . DIRECTORY_SEPARATOR . $fileName;
+
+    if (file_put_contents($tmpPath, $binary) === false) {
+        fail_response('Gagal menulis file sementara screening', 500);
+    }
+
+    return $tmpPath;
+}
+
+function run_document_screening(string $inputPath, string $tipeDokumen): array
+{
+    $scriptPath = __DIR__ . DIRECTORY_SEPARATOR . 'screening' . DIRECTORY_SEPARATOR . 'document_screening.py';
+    if (!is_file($scriptPath)) {
+        fail_response('Script screening Python tidak ditemukan', 500);
+    }
+
+    $pythonExecutable = trim((string)getenv('PYTHON_EXECUTABLE'));
+    if ($pythonExecutable === '') {
+        $pythonExecutable = 'python';
+    }
+
+    $command =
+        escapeshellarg($pythonExecutable) .
+        ' ' . escapeshellarg($scriptPath) .
+        ' --input ' . escapeshellarg($inputPath) .
+        ' --type ' . escapeshellarg($tipeDokumen);
+
+    $output = [];
+    $exitCode = 1;
+    exec($command . ' 2>&1', $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        $errorLog = implode("\n", array_slice($output, -12));
+        fail_response('Screening OCR/YOLOv8 gagal dijalankan: ' . $errorLog, 500);
+    }
+
+    $rawJson = trim(implode("\n", $output));
+    $decoded = json_decode($rawJson, true);
+    if (!is_array($decoded)) {
+        fail_response('Output screening Python tidak valid: ' . $rawJson, 500);
+    }
+
+    return $decoded;
+}
+
+function publication_status_where(string $statusExpr = 'msd.nama_status'): string
+{
+    // Keep only documents that are explicitly marked as published.
+    $lowerExpr = 'LOWER(TRIM(' . $statusExpr . '))';
+    return "($lowerExpr = 'publikasi' OR $lowerExpr = 'published' OR $lowerExpr LIKE '%publikasi%' OR $lowerExpr LIKE '%publish%')";
+}
+
+function ensure_push_tables(mysqli $conn): void
+{
+    $tokenTable = "
+        CREATE TABLE IF NOT EXISTS user_fcm_tokens (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT UNSIGNED NULL,
+            email VARCHAR(190) NULL,
+            token TEXT NOT NULL,
+            platform VARCHAR(32) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_token (token(191)),
+            KEY idx_user_email (user_id, email(191))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+
+    $notificationTable = "
+        CREATE TABLE IF NOT EXISTS user_notifications (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT UNSIGNED NULL,
+            email VARCHAR(190) NULL,
+            title VARCHAR(255) NOT NULL,
+            message TEXT NOT NULL,
+            data_json LONGTEXT NULL,
+            is_read TINYINT(1) NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_user_email (user_id, email(191)),
+            KEY idx_read_created (is_read, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+
+    if (!$conn->query($tokenTable)) {
+        fail_response('Gagal menyiapkan tabel token push: ' . $conn->error, 500);
+    }
+
+    if (!$conn->query($notificationTable)) {
+        fail_response('Gagal menyiapkan tabel notifikasi: ' . $conn->error, 500);
+    }
+}
+
+function store_notification(mysqli $conn, ?int $userId, ?string $email, string $title, string $message, array $data = []): int
+{
+    ensure_push_tables($conn);
+
+    $json = !empty($data) ? json_encode($data, JSON_UNESCAPED_UNICODE) : null;
+    $insert = $conn->prepare('INSERT INTO user_notifications (user_id, email, title, message, data_json) VALUES (?, ?, ?, ?, ?)');
+    if (!$insert) {
+        fail_response('Gagal menyiapkan notifikasi: ' . $conn->error, 500);
+    }
+
+    $normalizedEmail = $email !== null ? trim($email) : null;
+    $insert->bind_param('issss', $userId, $normalizedEmail, $title, $message, $json);
+    if (!$insert->execute()) {
+        fail_response('Gagal menyimpan notifikasi: ' . $insert->error, 500);
+    }
+
+    return (int)$conn->insert_id;
+}
+
+function get_user_tokens(mysqli $conn, ?int $userId, ?string $email): array
+{
+    ensure_push_tables($conn);
+
+    $tokens = [];
+    $normalizedEmail = $email !== null ? trim($email) : '';
+
+    if ($userId === null && $normalizedEmail === '') {
+        return $tokens;
+    }
+
+    if ($userId !== null && $normalizedEmail !== '') {
+        $stmt = $conn->prepare('SELECT token FROM user_fcm_tokens WHERE user_id = ? OR email = ? ORDER BY updated_at DESC');
+        if (!$stmt) {
+            fail_response('Gagal mengambil token push: ' . $conn->error, 500);
+        }
+        $stmt->bind_param('is', $userId, $normalizedEmail);
+    } elseif ($userId !== null) {
+        $stmt = $conn->prepare('SELECT token FROM user_fcm_tokens WHERE user_id = ? ORDER BY updated_at DESC');
+        if (!$stmt) {
+            fail_response('Gagal mengambil token push: ' . $conn->error, 500);
+        }
+        $stmt->bind_param('i', $userId);
+    } else {
+        $stmt = $conn->prepare('SELECT token FROM user_fcm_tokens WHERE email = ? ORDER BY updated_at DESC');
+        if (!$stmt) {
+            fail_response('Gagal mengambil token push: ' . $conn->error, 500);
+        }
+        $stmt->bind_param('s', $normalizedEmail);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $token = trim((string)($row['token'] ?? ''));
+        if ($token !== '') {
+            $tokens[] = $token;
+        }
+    }
+
+    return array_values(array_unique($tokens));
+}
+
+function send_fcm_push(array $tokens, string $title, string $message, array $data = []): bool
+{
+    $serverKey = trim((string)getenv('FCM_SERVER_KEY'));
+    if ($serverKey === '' || count($tokens) === 0 || !function_exists('curl_init')) {
+        return false;
+    }
+
+    $payload = json_encode([
+        'registration_ids' => array_values($tokens),
+        'priority' => 'high',
+        'notification' => [
+            'title' => $title,
+            'body' => $message,
+        ],
+        'data' => $data,
+    ], JSON_UNESCAPED_UNICODE);
+
+    if ($payload === false) {
+        return false;
+    }
+
+    $curl = curl_init('https://fcm.googleapis.com/fcm/send');
+    curl_setopt_array($curl, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: key=' . $serverKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => $payload,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+
+    $response = curl_exec($curl);
+    $curlError = curl_error($curl);
+    $statusCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+
+    if ($response === false || $curlError !== '' || $statusCode < 200 || $statusCode >= 300) {
+        return false;
+    }
+
+    return true;
+}
+
+function upsert_fcm_token(mysqli $conn, ?int $userId, ?string $email, string $token, ?string $platform = null): void
+{
+    ensure_push_tables($conn);
+
+    $lookup = $conn->prepare('SELECT id FROM user_fcm_tokens WHERE token = ? LIMIT 1');
+    if (!$lookup) {
+        fail_response('Gagal menyiapkan lookup token: ' . $conn->error, 500);
+    }
+    $lookup->bind_param('s', $token);
+    $lookup->execute();
+    $existing = $lookup->get_result()->fetch_assoc();
+
+    $normalizedEmail = $email !== null ? trim($email) : null;
+    $normalizedPlatform = $platform !== null ? trim($platform) : null;
+
+    if ($existing) {
+        $update = $conn->prepare('UPDATE user_fcm_tokens SET user_id = ?, email = ?, platform = ?, updated_at = CURRENT_TIMESTAMP WHERE token = ?');
+        if (!$update) {
+            fail_response('Gagal menyiapkan update token: ' . $conn->error, 500);
+        }
+        $update->bind_param('isss', $userId, $normalizedEmail, $normalizedPlatform, $token);
+        if (!$update->execute()) {
+            fail_response('Gagal memperbarui token push: ' . $update->error, 500);
+        }
+        return;
+    }
+
+    $insert = $conn->prepare('INSERT INTO user_fcm_tokens (user_id, email, token, platform) VALUES (?, ?, ?, ?)');
+    if (!$insert) {
+        fail_response('Gagal menyiapkan simpan token: ' . $conn->error, 500);
+    }
+    $insert->bind_param('isss', $userId, $normalizedEmail, $token, $normalizedPlatform);
+    if (!$insert->execute()) {
+        fail_response('Gagal menyimpan token push: ' . $insert->error, 500);
+    }
+}
+
+function fetch_user_notifications(mysqli $conn, ?int $userId, ?string $email): array
+{
+    ensure_push_tables($conn);
+
+    $notifications = [];
+    $normalizedEmail = $email !== null ? trim($email) : '';
+
+    if ($userId === null && $normalizedEmail === '') {
+        return $notifications;
+    }
+
+    if ($userId !== null && $normalizedEmail !== '') {
+        $stmt = $conn->prepare(
+            'SELECT id, title, message, data_json, is_read, created_at FROM user_notifications WHERE user_id = ? OR email = ? ORDER BY created_at DESC LIMIT 50'
+        );
+        if (!$stmt) {
+            fail_response('Gagal menyiapkan daftar notifikasi: ' . $conn->error, 500);
+        }
+        $stmt->bind_param('is', $userId, $normalizedEmail);
+    } elseif ($userId !== null) {
+        $stmt = $conn->prepare(
+            'SELECT id, title, message, data_json, is_read, created_at FROM user_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
+        );
+        if (!$stmt) {
+            fail_response('Gagal menyiapkan daftar notifikasi: ' . $conn->error, 500);
+        }
+        $stmt->bind_param('i', $userId);
+    } else {
+        $stmt = $conn->prepare(
+            'SELECT id, title, message, data_json, is_read, created_at FROM user_notifications WHERE email = ? ORDER BY created_at DESC LIMIT 50'
+        );
+        if (!$stmt) {
+            fail_response('Gagal menyiapkan daftar notifikasi: ' . $conn->error, 500);
+        }
+        $stmt->bind_param('s', $normalizedEmail);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $data = [];
+        if (!empty($row['data_json'])) {
+            $decoded = json_decode((string)$row['data_json'], true);
+            if (is_array($decoded)) {
+                $data = $decoded;
+            }
+        }
+
+        $notifications[] = [
+            'id' => (string)$row['id'],
+            'title' => $row['title'],
+            'message' => $row['message'],
+            'time' => $row['created_at'],
+            'isRead' => (int)$row['is_read'] === 1,
+            'data' => $data,
+        ];
+    }
+
+    return $notifications;
+}
+
 switch ($action) {
     case 'dashboard':
-        $totalDokumen = (int)scalar_query($conn, 'SELECT COUNT(*) FROM dokumen');
+        $statusFilter = publication_status_where('msd.nama_status');
+        $totalDokumen = (int)scalar_query($conn, "
+            SELECT COUNT(*)
+            FROM dokumen d
+            LEFT JOIN master_status_dokumen msd ON msd.status_id = d.status_id
+            WHERE $statusFilter
+        ");
         $penggunaAktif = (int)scalar_query($conn, "SELECT COUNT(*) FROM users WHERE status = 'approved'");
-        $uploadBaru = (int)scalar_query($conn, 'SELECT COUNT(*) FROM dokumen WHERE DATE(tgl_unggah) = CURDATE()');
+        $uploadBaru = (int)scalar_query($conn, "
+            SELECT COUNT(*)
+            FROM dokumen d
+            LEFT JOIN master_status_dokumen msd ON msd.status_id = d.status_id
+            WHERE DATE(d.tgl_unggah) = CURDATE() AND $statusFilter
+        ");
         $totalPenulis = (int)scalar_query($conn, 'SELECT COUNT(*) FROM master_author');
 
         $recentSql = "
@@ -153,6 +480,7 @@ switch ($action) {
             LEFT JOIN users u ON u.id_user = d.uploader_id
             LEFT JOIN master_status_dokumen msd ON msd.status_id = d.status_id
             LEFT JOIN dokumen_author da ON da.dokumen_id = d.dokumen_id
+            WHERE $statusFilter
             GROUP BY d.dokumen_id, d.judul, tanggal, kategori, uploader
             ORDER BY d.tgl_unggah DESC
             LIMIT 5
@@ -229,6 +557,7 @@ switch ($action) {
         $year = trim($_GET['year'] ?? '');
         $jurusan = trim($_GET['jurusan'] ?? '');
         $prodi = trim($_GET['prodi'] ?? '');
+        $statusFilter = publication_status_where('msd.nama_status');
 
         $sql = "
             SELECT
@@ -248,7 +577,7 @@ switch ($action) {
             LEFT JOIN master_prodi mp ON mp.id_prodi = d.id_prodi
             LEFT JOIN master_tahun mt ON mt.year_id = d.year_id
             LEFT JOIN dokumen_author da ON da.dokumen_id = d.dokumen_id
-            WHERE 1=1
+            WHERE $statusFilter
         ";
 
         if ($year !== '') {
@@ -315,6 +644,8 @@ switch ($action) {
             SELECT COALESCE(mj.nama_jurusan, 'Lainnya') AS label, COUNT(*) AS total
             FROM dokumen d
             LEFT JOIN master_jurusan mj ON mj.id_jurusan = d.id_jurusan
+            LEFT JOIN master_status_dokumen msd ON msd.status_id = d.status_id
+            WHERE " . publication_status_where('msd.nama_status') . "
             GROUP BY label
             ORDER BY total DESC
             LIMIT 6
@@ -363,7 +694,8 @@ switch ($action) {
             FROM dokumen d
             LEFT JOIN users u ON u.id_user = d.uploader_id
             LEFT JOIN master_status_dokumen msd ON msd.status_id = d.status_id
-            WHERE d.judul LIKE ? OR d.abstrak LIKE ?
+                        WHERE (d.judul LIKE ? OR d.abstrak LIKE ?)
+                            AND " . publication_status_where('msd.nama_status') . "
             ORDER BY d.tgl_unggah DESC
             LIMIT 30
             "
@@ -549,6 +881,7 @@ switch ($action) {
         $kataKunci = is_array($input['kata_kunci'] ?? null) ? $input['kata_kunci'] : [];
         $penulis = is_array($input['penulis'] ?? null) ? $input['penulis'] : [];
         $turnitin = (int)($input['turnitin'] ?? 0);
+        $uploaderEmail = trim(($input['uploader_email'] ?? '') . '');
 
         if ($judul === '' || $originalFileName === '') {
             fail_response('Judul dan file dokumen wajib diisi');
@@ -643,10 +976,104 @@ switch ($action) {
             }
         }
 
+        if ($uploaderEmail !== '') {
+            $notificationId = store_notification(
+                $conn,
+                $uploaderId > 0 ? $uploaderId : null,
+                $uploaderEmail,
+                'Dokumen berhasil diunggah',
+                'Dokumen "' . $judul . '" berhasil disimpan dan menunggu proses berikutnya.',
+                [
+                    'type' => 'document_uploaded',
+                    'dokumen_id' => $dokumenId,
+                    'judul' => $judul,
+                ]
+            );
+
+            $tokens = get_user_tokens($conn, $uploaderId > 0 ? $uploaderId : null, $uploaderEmail);
+            send_fcm_push(
+                $tokens,
+                'Dokumen berhasil diunggah',
+                'Dokumen "' . $judul . '" berhasil disimpan.',
+                [
+                    'notification_id' => (string)$notificationId,
+                    'type' => 'document_uploaded',
+                    'dokumen_id' => (string)$dokumenId,
+                    'judul' => $judul,
+                ]
+            );
+        }
+
         success_response([
             'message' => 'Dokumen berhasil disimpan',
             'dokumen_id' => $dokumenId
         ]);
+        break;
+
+    case 'register_push_token':
+        $input = read_json_input();
+        $token = trim(($input['token'] ?? '') . '');
+        $email = trim(($input['email'] ?? '') . '');
+        $platform = trim(($input['platform'] ?? '') . '');
+        $userId = (int)($input['user_id'] ?? 0);
+
+        if ($token === '') {
+            fail_response('Token push wajib diisi');
+        }
+
+        upsert_fcm_token(
+            $conn,
+            $userId > 0 ? $userId : null,
+            $email !== '' ? $email : null,
+            $token,
+            $platform !== '' ? $platform : null
+        );
+
+        success_response([
+            'message' => 'Token push berhasil disimpan'
+        ]);
+        break;
+
+    case 'notifications':
+        $email = trim(($_GET['email'] ?? '') . '');
+        $userId = (int)($_GET['user_id'] ?? 0);
+
+        $notifications = fetch_user_notifications(
+            $conn,
+            $userId > 0 ? $userId : null,
+            $email !== '' ? $email : null
+        );
+
+        success_response([
+            'notifications' => $notifications
+        ]);
+        break;
+
+    case 'screen_document':
+        $input = read_json_input();
+        $originalFileName = trim(($input['original_file_name'] ?? '') . '');
+        $fileBytesBase64 = trim(($input['file_bytes_base64'] ?? '') . '');
+        $tipeDokumen = trim(($input['tipe_dokumen'] ?? '') . '');
+
+        if ($originalFileName === '' || $fileBytesBase64 === '') {
+            fail_response('Nama file dan isi file wajib diisi');
+        }
+
+        if ($tipeDokumen === '') {
+            $tipeDokumen = 'umum';
+        }
+
+        $tmpPath = create_temp_screening_file($fileBytesBase64, $originalFileName);
+        try {
+            $screening = run_document_screening($tmpPath, $tipeDokumen);
+            success_response([
+                'screening' => $screening
+            ]);
+        } finally {
+            if (is_file($tmpPath)) {
+                @unlink($tmpPath);
+            }
+        }
         break;
 
     default:

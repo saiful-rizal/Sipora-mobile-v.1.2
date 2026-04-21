@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/app_session_service.dart';
 import '../services/document_format_screening_service.dart';
 import '../services/sipora_api_service.dart';
 
@@ -49,6 +50,8 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   String? _selectedProdi;
   String? _selectedDivisi;
   String? _selectedTema;
+  bool _isLookupLoading = true;
+  String? _lookupError;
 
   late AnimationController _glowController;
   late AnimationController _loadingSpinnerController;
@@ -72,42 +75,12 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   }
 
   // ═══ Data Lists ═══
-  List<String> _tipeDokumen = [
-    'Skripsi',
-    'Thesis',
-    'Disertasi',
-    'Laporan PKL',
-    'Artikel Ilmiah',
-  ];
-  List<String> _tahunList = List.generate(
-    10,
-    (index) => (DateTime.now().year - index).toString(),
-  );
-  List<String> _jurusanList = [
-    'Teknologi Informasi',
-    'Teknik Sipil dan Perencanaan',
-    'Teknik Elektro',
-    'Bisnis dan Manajemen',
-    'Akuntansi',
-  ];
-  List<String> _prodiList = [
-    'Teknik Informatika',
-    'Teknik Sipil',
-    'Teknik Elektro',
-    'Administrasi Bisnis',
-    'Akuntansi',
-  ];
-  List<String> _divisiList = [
-    'Penelitian',
-    'Pengabdian Masyarakat',
-    'Pendidikan',
-  ];
-  List<String> _temaList = [
-    'Teknologi Informasi',
-    'Pertanian',
-    'Kesehatan',
-    'Ekonomi Kreatif',
-  ];
+  List<String> _tipeDokumen = const [];
+  List<String> _tahunList = const [];
+  List<String> _jurusanList = const [];
+  List<String> _prodiList = const [];
+  List<String> _divisiList = const [];
+  List<String> _temaList = const [];
 
   @override
   void initState() {
@@ -120,54 +93,103 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
+    _judulController.addListener(_onFormFieldChanged);
+    _abstrakController.addListener(_onFormFieldChanged);
+    _penulisController.addListener(_onFormFieldChanged);
+    _kataKunciController.addListener(_onFormFieldChanged);
+    _skorController.addListener(_onFormFieldChanged);
     _loadLookupOptions();
   }
 
+  void _onFormFieldChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _loadLookupOptions() async {
+    if (mounted) {
+      setState(() {
+        _isLookupLoading = true;
+        _lookupError = null;
+      });
+    }
+
     try {
       final lookup = await _apiService.fetchLookupOptions();
       if (!mounted) return;
 
       setState(() {
-        final tipe =
-            (lookup['tipe_dokumen'] as List?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            const <String>[];
-        final tahun =
-            (lookup['tahun'] as List?)?.map((e) => e.toString()).toList() ??
-            const <String>[];
-        final jurusan =
-            (lookup['jurusan'] as List?)?.map((e) => e.toString()).toList() ??
-            const <String>[];
-        final prodi =
-            (lookup['prodi'] as List?)?.map((e) => e.toString()).toList() ??
-            const <String>[];
-        final divisi =
-            (lookup['divisi'] as List?)?.map((e) => e.toString()).toList() ??
-            const <String>[];
-        final tema =
-            (lookup['tema'] as List?)?.map((e) => e.toString()).toList() ??
-            const <String>[];
+        _tipeDokumen = _normalizeLookupList(lookup['tipe_dokumen']);
+        _tahunList = _normalizeLookupList(lookup['tahun']);
+        _jurusanList = _normalizeLookupList(lookup['jurusan']);
+        _prodiList = _normalizeLookupList(lookup['prodi']);
+        _divisiList = _normalizeLookupList(lookup['divisi']);
+        _temaList = _normalizeLookupList(lookup['tema']);
 
-        if (tipe.isNotEmpty) _tipeDokumen = tipe;
-        if (tahun.isNotEmpty) _tahunList = tahun;
-        if (jurusan.isNotEmpty) _jurusanList = jurusan;
-        if (prodi.isNotEmpty) _prodiList = prodi;
-        if (divisi.isNotEmpty) _divisiList = divisi;
-        if (tema.isNotEmpty) _temaList = tema;
+        if (_selectedTipe != null && !_tipeDokumen.contains(_selectedTipe)) {
+          _selectedTipe = null;
+        }
+        if (_selectedTahun != null && !_tahunList.contains(_selectedTahun)) {
+          _selectedTahun = null;
+        }
+        if (_selectedJurusan != null &&
+            !_jurusanList.contains(_selectedJurusan)) {
+          _selectedJurusan = null;
+        }
+        if (_selectedProdi != null && !_prodiList.contains(_selectedProdi)) {
+          _selectedProdi = null;
+        }
+        if (_selectedDivisi != null && !_divisiList.contains(_selectedDivisi)) {
+          _selectedDivisi = null;
+        }
+        if (_selectedTema != null && !_temaList.contains(_selectedTema)) {
+          _selectedTema = null;
+        }
+
+        _isLookupLoading = false;
+        if (_tipeDokumen.isEmpty ||
+            _tahunList.isEmpty ||
+            _jurusanList.isEmpty ||
+            _prodiList.isEmpty ||
+            _divisiList.isEmpty ||
+            _temaList.isEmpty) {
+          _lookupError =
+              'Data dropdown dari database belum lengkap. Periksa tabel master.';
+        }
       });
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLookupLoading = false;
+        _lookupError = 'Gagal mengambil data dropdown dari database.';
+      });
+    }
+  }
+
+  List<String> _normalizeLookupList(dynamic raw) {
+    final source = (raw as List?) ?? const [];
+    final cleaned = source
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+    return cleaned;
   }
 
   @override
   void dispose() {
     _glowController.dispose();
     _loadingSpinnerController.dispose();
+    _judulController.removeListener(_onFormFieldChanged);
     _judulController.dispose();
+    _abstrakController.removeListener(_onFormFieldChanged);
     _abstrakController.dispose();
+    _penulisController.removeListener(_onFormFieldChanged);
     _penulisController.dispose();
+    _kataKunciController.removeListener(_onFormFieldChanged);
     _kataKunciController.dispose();
+    _skorController.removeListener(_onFormFieldChanged);
     _skorController.dispose();
     super.dispose();
   }
@@ -176,7 +198,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   Future<void> _pickFileUtama() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['doc', 'docx'],
+      allowedExtensions: ['docx', 'pdf'],
       withData: true,
     );
     if (result != null) {
@@ -204,34 +226,22 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
     await _runFormatScreeningIfNeeded();
   }
 
-  bool _isWordFile(String? fileName) {
+  bool _isScreeningSupportedFile(String? fileName) {
     if (fileName == null) return false;
-    return _formatScreeningService.isWordDocument(fileName);
+    return _formatScreeningService.isSupportedForScreening(fileName);
   }
 
   Future<void> _runFormatScreeningIfNeeded() async {
-    if (!_hasFileUtama || _selectedTipe == null || _namaFileUtama == null) {
+    if (!_hasFileUtama || _namaFileUtama == null) {
       return;
     }
 
-    if (!_isWordFile(_namaFileUtama)) {
+    if (!_isScreeningSupportedFile(_namaFileUtama)) {
       if (!mounted) return;
       setState(() {
         _isScreeningFormat = false;
         _screeningResult = null;
-        _screeningError =
-            'Screening format otomatis hanya dijalankan untuk dokumen Word.';
-      });
-      return;
-    }
-
-    if (!_formatScreeningService.canScreenWordDocument(_namaFileUtama!)) {
-      if (!mounted) return;
-      setState(() {
-        _isScreeningFormat = false;
-        _screeningResult = null;
-        _screeningError =
-            'File .doc belum bisa discreening otomatis. Gunakan format .docx.';
+        _screeningError = 'Screening otomatis hanya mendukung DOCX atau PDF.';
       });
       return;
     }
@@ -255,10 +265,10 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
     });
 
     try {
-      final result = _formatScreeningService.screenDocx(
+      final result = await _formatScreeningService.screenDocument(
         bytes: _bytesFileUtama!,
         fileName: _namaFileUtama!,
-        tipeDokumen: _selectedTipe!,
+        tipeDokumen: _selectedTipe?.trim() ?? '',
       );
 
       if (!mounted) return;
@@ -276,6 +286,47 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
             'Screening format gagal diproses. Pastikan file DOCX tidak rusak.';
       });
     }
+  }
+
+  bool _isCheckPassed(String check) {
+    final lower = check.toLowerCase();
+    return !RegExp(r'\b(kurang|belum|tidak|gagal|error)\b').hasMatch(lower);
+  }
+
+  List<String> _buildScreeningRecommendations(DocumentFormatScreeningResult r) {
+    final failedChecks = r.checks.where((c) => !_isCheckPassed(c)).toList();
+    if (failedChecks.isEmpty) {
+      return const <String>[
+        'Dokumen sudah memenuhi aturan screening. Lanjutkan ke tahap pengisian metadata dan unggah.',
+      ];
+    }
+
+    final recommendations = <String>[];
+    for (final check in failedChecks) {
+      final lower = check.toLowerCase();
+      if (lower.contains('heading')) {
+        recommendations.add(
+          'Tambahkan heading/bab utama sesuai struktur dokumen agar bagian penting mudah terdeteksi.',
+        );
+      } else if (lower.contains('paragraf') || lower.contains('rapi')) {
+        recommendations.add(
+          'Rapikan paragraf isi dengan format konsisten dan hindari baris terlalu pendek agar lolos indikator kerapian.',
+        );
+      } else if (lower.contains('bagian wajib') ||
+          lower.contains('pendahuluan') ||
+          lower.contains('abstrak') ||
+          lower.contains('bab')) {
+        recommendations.add(
+          'Lengkapi bagian wajib dokumen (mis. abstrak, pendahuluan, atau susunan BAB) sesuai jenis dokumen.',
+        );
+      } else {
+        recommendations.add(
+          'Periksa ulang format pada poin yang ditandai revisi, lalu unggah ulang file untuk screening terbaru.',
+        );
+      }
+    }
+
+    return recommendations.toSet().toList();
   }
 
   Future<void> _pickFileTurnitin() async {
@@ -330,9 +381,16 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
       _showSnackBar('Silakan pilih file utama terlebih dahulu!');
       return;
     }
+    if (_isLookupLoading) {
+      _showSnackBar('Data dropdown dari database masih dimuat.');
+      return;
+    }
+    if (_lookupError != null) {
+      _showSnackBar(_lookupError!);
+      return;
+    }
     if (_formKey.currentState!.validate()) {
-      if (_selectedTipe == null ||
-          _selectedTahun == null ||
+      if (_selectedTahun == null ||
           _selectedJurusan == null ||
           _selectedProdi == null ||
           _selectedDivisi == null ||
@@ -341,7 +399,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
         return;
       }
 
-      if (_isWordFile(_namaFileUtama)) {
+      if (_isScreeningSupportedFile(_namaFileUtama)) {
         if (_isScreeningFormat) {
           _showSnackBar('Screening format sedang berjalan, tunggu sebentar.');
           return;
@@ -374,11 +432,13 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
           prodi: _selectedProdi!,
           divisi: _selectedDivisi!,
           tema: _selectedTema!,
-          tipeDokumen: _selectedTipe!,
+          tipeDokumen: _selectedTipe ?? '',
           penulis: _penulisList,
           kataKunci: _kataKunciList,
           turnitin: int.tryParse(_skorController.text.trim()) ?? 0,
           turnitinFile: _namaFileTurnitin,
+          uploaderId: AppSessionService.currentUserId ?? 1,
+          uploaderEmail: AppSessionService.currentEmail,
         );
 
         if (mounted) {
@@ -756,7 +816,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                       ),
                       SizedBox(height: _getWidth(0.005)),
                       Text(
-                        "DOC, DOCX (Maksimal 10MB)",
+                        "DOCX, PDF (Maksimal 10MB)",
                         style: TextStyle(
                           fontSize: _getFontSize(11),
                           color: const Color(0xFF888888),
@@ -1125,6 +1185,8 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
 
   Widget _buildFormatScreeningPanel() {
     final hasType = _selectedTipe != null;
+    final hasFile = _hasFileUtama;
+    final score = _screeningResult?.score.round() ?? 0;
     final baseColor = _screeningResult == null
         ? const Color(0xFFE3F2FD)
         : _screeningResult!.passed
@@ -1148,21 +1210,61 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Screening Format Dokumen',
-            style: GoogleFonts.outfit(
-              fontSize: _getFontSize(13),
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF1E3A5F),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Screening Otomatis',
+                  style: GoogleFonts.outfit(
+                    fontSize: _getFontSize(13),
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF1E3A5F),
+                  ),
+                ),
+              ),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: _getWidth(0.025),
+                  vertical: _getWidth(0.012),
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(_getWidth(0.016)),
+                  border: Border.all(
+                    color: _screeningResult == null
+                        ? const Color(0xFFBBDEFB)
+                        : _screeningResult!.passed
+                        ? const Color(0xFFA5D6A7)
+                        : const Color(0xFFEF9A9A),
+                  ),
+                ),
+                child: Text(
+                  '$score',
+                  style: GoogleFonts.outfit(
+                    fontSize: _getFontSize(16),
+                    fontWeight: FontWeight.w800,
+                    color: _screeningResult == null
+                        ? const Color(0xFF1565C0)
+                        : _screeningResult!.passed
+                        ? const Color(0xFF2E7D32)
+                        : const Color(0xFFC62828),
+                  ),
+                ),
+              ),
+            ],
           ),
           SizedBox(height: _getWidth(0.012)),
-          if (!hasType)
+          if (!hasFile)
             Text(
-              'Pilih Jenis Dokumen terlebih dahulu agar aturan format bisa diterapkan.',
+              'Pilih file dokumen terlebih dahulu untuk memulai screening otomatis.',
               style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
             ),
-          if (hasType && _isScreeningFormat) ...[
+          if (hasFile && !hasType)
+            Text(
+              'Jenis dokumen belum dipilih. Screening berjalan dengan aturan umum dan akan diperbarui otomatis setelah jenis dipilih.',
+              style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
+            ),
+          if (hasFile && _isScreeningFormat) ...[
             Row(
               children: [
                 SizedBox(
@@ -1173,14 +1275,14 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                 SizedBox(width: _getWidth(0.02)),
                 Expanded(
                   child: Text(
-                    'Sedang screening format file Word...',
+                    'Sedang screening dokumen (YOLOv8 + OCR)...',
                     style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
                   ),
                 ),
               ],
             ),
           ],
-          if (hasType && _screeningError != null)
+          if (hasFile && _screeningError != null)
             Text(
               _screeningError!,
               style: GoogleFonts.outfit(
@@ -1188,43 +1290,151 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                 color: const Color(0xFFC62828),
               ),
             ),
-          if (hasType && _screeningResult != null) ...[
-            Row(
-              children: [
-                Icon(
-                  _screeningResult!.passed
-                      ? Icons.verified_rounded
-                      : Icons.warning_amber_rounded,
-                  color: _screeningResult!.passed
-                      ? const Color(0xFF2E7D32)
-                      : const Color(0xFFC62828),
-                  size: _getFontSize(18),
-                ),
-                SizedBox(width: _getWidth(0.015)),
-                Expanded(
-                  child: Text(
-                    _screeningResult!.summary,
-                    style: GoogleFonts.outfit(fontSize: _getFontSize(11)),
+          if (hasFile && _screeningResult != null) ...[
+            Container(
+              padding: EdgeInsets.all(_getWidth(0.018)),
+              decoration: BoxDecoration(
+                color: _screeningResult!.passed
+                    ? const Color(0xFFE8F5E9)
+                    : const Color(0xFFFFEBEE),
+                borderRadius: BorderRadius.circular(_getWidth(0.014)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    _screeningResult!.passed
+                        ? Icons.check_circle_rounded
+                        : Icons.error_rounded,
+                    color: _screeningResult!.passed
+                        ? const Color(0xFF2E7D32)
+                        : const Color(0xFFC62828),
+                    size: _getFontSize(18),
                   ),
+                  SizedBox(width: _getWidth(0.015)),
+                  Expanded(
+                    child: Text(
+                      _screeningResult!.summary,
+                      style: GoogleFonts.outfit(
+                        fontSize: _getFontSize(11),
+                        color: _screeningResult!.passed
+                            ? const Color(0xFF1B5E20)
+                            : const Color(0xFFB71C1C),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: _getWidth(0.012)),
+            Wrap(
+              spacing: _getWidth(0.012),
+              runSpacing: _getWidth(0.008),
+              children: [
+                _buildScreeningMetaChip('Engine: ${_screeningResult!.engine}'),
+                _buildScreeningMetaChip('Skor: $score%'),
+                _buildScreeningMetaChip(
+                  'Halaman: ${_screeningResult!.totalPages}',
+                ),
+                _buildScreeningMetaChip(
+                  'Paragraf: ${_screeningResult!.totalParagraphs}',
                 ),
               ],
             ),
-            SizedBox(height: _getWidth(0.01)),
-            Text(
-              'Skor: ${_screeningResult!.score.toStringAsFixed(0)} | Heading: ${_screeningResult!.headingCount} | Rata kanan-kiri: ${(_screeningResult!.justifiedBodyRatio * 100).toStringAsFixed(1)}%',
-              style: GoogleFonts.outfit(
-                fontSize: _getFontSize(11),
-                color: const Color(0xFF37474F),
-              ),
-            ),
-            SizedBox(height: _getWidth(0.008)),
-            ..._screeningResult!.checks.map(
-              (c) => Padding(
-                padding: EdgeInsets.only(bottom: _getWidth(0.005)),
-                child: Text(
-                  '- $c',
-                  style: GoogleFonts.outfit(fontSize: _getFontSize(10.8)),
+            SizedBox(height: _getWidth(0.012)),
+            ..._screeningResult!.checks.map((check) {
+              final passed = _isCheckPassed(check);
+              return Container(
+                margin: EdgeInsets.only(bottom: _getWidth(0.008)),
+                padding: EdgeInsets.symmetric(
+                  horizontal: _getWidth(0.018),
+                  vertical: _getWidth(0.012),
                 ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(_getWidth(0.012)),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      passed
+                          ? Icons.check_circle_outline
+                          : Icons.cancel_outlined,
+                      size: _getFontSize(16),
+                      color: passed
+                          ? const Color(0xFF2E7D32)
+                          : const Color(0xFFC62828),
+                    ),
+                    SizedBox(width: _getWidth(0.015)),
+                    Expanded(
+                      child: Text(
+                        check,
+                        style: GoogleFonts.outfit(fontSize: _getFontSize(10.8)),
+                      ),
+                    ),
+                    SizedBox(width: _getWidth(0.01)),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: _getWidth(0.016),
+                        vertical: _getWidth(0.006),
+                      ),
+                      decoration: BoxDecoration(
+                        color: passed
+                            ? const Color(0xFFE8F5E9)
+                            : const Color(0xFFFFEBEE),
+                        borderRadius: BorderRadius.circular(_getWidth(0.02)),
+                      ),
+                      child: Text(
+                        passed ? 'OK' : 'REVISI',
+                        style: GoogleFonts.outfit(
+                          fontSize: _getFontSize(9.5),
+                          fontWeight: FontWeight.w700,
+                          color: passed
+                              ? const Color(0xFF2E7D32)
+                              : const Color(0xFFC62828),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            Container(
+              width: double.infinity,
+              margin: EdgeInsets.only(top: _getWidth(0.006)),
+              padding: EdgeInsets.all(_getWidth(0.018)),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F8FF),
+                borderRadius: BorderRadius.circular(_getWidth(0.012)),
+                border: Border.all(color: const Color(0xFFBBDEFB)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Rekomendasi AI',
+                    style: GoogleFonts.outfit(
+                      fontSize: _getFontSize(11.2),
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1E3A5F),
+                    ),
+                  ),
+                  SizedBox(height: _getWidth(0.008)),
+                  ..._buildScreeningRecommendations(_screeningResult!).map(
+                    (item) => Padding(
+                      padding: EdgeInsets.only(bottom: _getWidth(0.006)),
+                      child: Text(
+                        '• $item',
+                        style: GoogleFonts.outfit(
+                          fontSize: _getFontSize(10.5),
+                          color: const Color(0xFF455A64),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1286,6 +1496,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                       _selectedTipe,
                       _tipeDokumen,
                       _onTipeDokumenChanged,
+                      requiredField: false,
                     ),
                   ),
                   SizedBox(width: _getWidth(0.03)),
@@ -1522,15 +1733,38 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildScreeningMetaChip(String text) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: _getWidth(0.018),
+        vertical: _getWidth(0.008),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(_getWidth(0.02)),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Text(
+        text,
+        style: GoogleFonts.outfit(
+          fontSize: _getFontSize(10.2),
+          fontWeight: FontWeight.w600,
+          color: const Color(0xFF455A64),
+        ),
+      ),
+    );
+  }
+
   // ══════════════════════════════════════════════════════════
   //  SUBMIT BUTTON
   // ══════════════════════════════════════════════════════════
   Widget _buildSubmitButton() {
+    final canSubmit = _canSubmitDocument();
     return SizedBox(
       width: double.infinity,
       height: _getWidth(0.13),
       child: ElevatedButton(
-        onPressed: _isLoading ? null : _submitForm,
+        onPressed: (_isLoading || !canSubmit) ? null : _submitForm,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF1565C0),
           disabledBackgroundColor: const Color(0xFF1565C0).withOpacity(0.7),
@@ -1578,6 +1812,35 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
               ),
       ),
     );
+  }
+
+  bool _canSubmitDocument() {
+    if (_isLoading || _isLookupLoading || _lookupError != null) {
+      return false;
+    }
+
+    final hasRequiredText =
+        _judulController.text.trim().isNotEmpty &&
+        _abstrakController.text.trim().isNotEmpty;
+    final hasRequiredDropdowns =
+        _selectedTahun != null &&
+        _selectedJurusan != null &&
+        _selectedProdi != null &&
+        _selectedDivisi != null &&
+        _selectedTema != null;
+
+    if (!hasRequiredText || !hasRequiredDropdowns || !_hasFileUtama) {
+      return false;
+    }
+
+    if (_isScreeningSupportedFile(_namaFileUtama)) {
+      if (_isScreeningFormat) return false;
+      if (_screeningError != null) return false;
+      if (_screeningResult == null) return false;
+      if (!_screeningResult!.passed) return false;
+    }
+
+    return true;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -1694,8 +1957,10 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
     String label,
     String? value,
     List<String> items,
-    Function(String?) onChanged,
-  ) {
+    Function(String?) onChanged, {
+    bool requiredField = true,
+  }) {
+    final isDisabled = _isLookupLoading || items.isEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1710,7 +1975,11 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
             initialValue: value,
             isExpanded: true,
             hint: Text(
-              "Pilih",
+              _isLookupLoading
+                  ? 'Memuat data database...'
+                  : items.isEmpty
+                  ? 'Data $label belum tersedia'
+                  : 'Pilih',
               style: TextStyle(
                 fontSize: _getFontSize(12),
                 color: Colors.grey.shade400,
@@ -1737,10 +2006,13 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                       DropdownMenuItem<String>(value: e, child: Text(e)),
                 )
                 .toList(),
-            onChanged: onChanged,
+            onChanged: isDisabled ? null : onChanged,
             borderRadius: BorderRadius.circular(14),
             validator: (value) {
-              if (value == null) return 'Pilih $label';
+              if (_isLookupLoading) return 'Data $label masih dimuat';
+              if (items.isEmpty)
+                return 'Data $label belum tersedia di database';
+              if (requiredField && value == null) return 'Pilih $label';
               return null;
             },
           ),
