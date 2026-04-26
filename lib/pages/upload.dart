@@ -276,6 +276,9 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
         _isScreeningFormat = false;
         _screeningResult = result;
         _screeningError = null;
+        if (_isTurnitinLocked) {
+          _clearTurnitinInputs();
+        }
       });
     } catch (_) {
       if (!mounted) return;
@@ -284,8 +287,37 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
         _screeningResult = null;
         _screeningError =
             'Screening format gagal diproses. Pastikan file DOCX tidak rusak.';
+        _clearTurnitinInputs();
       });
     }
+  }
+
+  bool get _isTurnitinLocked {
+    final result = _screeningResult;
+    if (_isScreeningFormat) {
+      return true;
+    }
+
+    if (!_isScreeningSupportedFile(_namaFileUtama)) {
+      return false;
+    }
+
+    if (_screeningError != null) {
+      return true;
+    }
+
+    if (result == null) {
+      return true;
+    }
+
+    return !result.canAnalyze || !result.passed;
+  }
+
+  void _clearTurnitinInputs() {
+    _namaFileTurnitin = null;
+    _ukuranFileTurnitin = 0;
+    _hasFileTurnitin = false;
+    _skorController.clear();
   }
 
   bool _isCheckPassed(String check) {
@@ -876,6 +908,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   //  CARD UPLOAD TURNITIN
   // ══════════════════════════════════════════════════════════
   Widget _buildCardUploadTurnitin() {
+    final isTurnitinLocked = _isTurnitinLocked;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -916,84 +949,110 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
             SizedBox(height: _getWidth(0.02)),
 
             // Dashed upload area
-            CustomPaint(
-              painter: _DashedBorderPainter(),
-              child: Center(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    vertical: _getWidth(0.04),
-                    horizontal: _getWidth(0.03),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.cloud_upload_outlined,
-                        size: _getFontSize(40),
-                        color: const Color(0xFF757575),
+            Opacity(
+              opacity: isTurnitinLocked ? 0.45 : 1,
+              child: IgnorePointer(
+                ignoring: isTurnitinLocked,
+                child: CustomPaint(
+                  painter: _DashedBorderPainter(),
+                  child: Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        vertical: _getWidth(0.04),
+                        horizontal: _getWidth(0.03),
                       ),
-                      SizedBox(height: _getWidth(0.025)),
-                      Text(
-                        "Upload laporan Turnitin (jika ada)",
-                        style: TextStyle(
-                          fontSize: _getFontSize(13),
-                          color: const Color(0xFF333333),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      SizedBox(height: _getWidth(0.005)),
-                      Text(
-                        "PDF (Maksimal 5MB)",
-                        style: TextStyle(
-                          fontSize: _getFontSize(11),
-                          color: const Color(0xFF888888),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      SizedBox(height: _getWidth(0.025)),
-                      ElevatedButton(
-                        onPressed: _pickFileTurnitin,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2196F3),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.cloud_upload_outlined,
+                            size: _getFontSize(40),
+                            color: const Color(0xFF757575),
                           ),
-                          elevation: 0,
-                          padding: EdgeInsets.symmetric(
-                            horizontal: _getWidth(0.06),
-                            vertical: _getWidth(0.02),
+                          SizedBox(height: _getWidth(0.025)),
+                          Text(
+                            "Upload laporan Turnitin (jika ada)",
+                            style: TextStyle(
+                              fontSize: _getFontSize(13),
+                              color: const Color(0xFF333333),
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                        ),
-                        child: Text(
-                          "Pilih File Turnitin",
-                          style: TextStyle(
-                            fontSize: _getFontSize(13),
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                          SizedBox(height: _getWidth(0.005)),
+                          Text(
+                            "PDF (Maksimal 5MB)",
+                            style: TextStyle(
+                              fontSize: _getFontSize(11),
+                              color: const Color(0xFF888888),
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                        ),
-                      ),
+                          SizedBox(height: _getWidth(0.025)),
+                          ElevatedButton(
+                            onPressed: _pickFileTurnitin,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2196F3),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              elevation: 0,
+                              padding: EdgeInsets.symmetric(
+                                horizontal: _getWidth(0.06),
+                                vertical: _getWidth(0.02),
+                              ),
+                            ),
+                            child: Text(
+                              "Pilih File Turnitin",
+                              style: TextStyle(
+                                fontSize: _getFontSize(13),
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
 
-                      // File info row
-                      if (_hasFileTurnitin) ...[
-                        SizedBox(height: _getWidth(0.025)),
-                        _buildFileInfoRow(
-                          fileName: _namaFileTurnitin!,
-                          fileSize: _ukuranFileTurnitin,
-                          iconColor: const Color(0xFF4CAF50),
-                          onRemove: _removeFileTurnitin,
-                        ),
-                      ],
+                          // File info row
+                          if (_hasFileTurnitin) ...[
+                            SizedBox(height: _getWidth(0.025)),
+                            _buildFileInfoRow(
+                              fileName: _namaFileTurnitin!,
+                              fileSize: _ukuranFileTurnitin,
+                              iconColor: const Color(0xFF4CAF50),
+                              onRemove: _removeFileTurnitin,
+                            ),
+                          ],
 
-                      // Skor Turnitin Section
-                      SizedBox(height: _getWidth(0.04)),
-                      _buildSkorTurnitinSection(),
-                    ],
+                          // Skor Turnitin Section
+                          SizedBox(height: _getWidth(0.04)),
+                          _buildSkorTurnitinSection(),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
+            if (isTurnitinLocked) ...[
+              SizedBox(height: _getWidth(0.02)),
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(_getWidth(0.03)),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFFFE0B2)),
+                ),
+                child: Text(
+                  'Turnitin dinonaktifkan sampai dokumen lolos screening format.',
+                  style: TextStyle(
+                    fontSize: _getFontSize(11.5),
+                    color: const Color(0xFF8A4B00),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1004,10 +1063,13 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
   //  SKOR TURNITIN
   // ══════════════════════════════════════════════════════════
   Widget _buildSkorTurnitinSection() {
+    final isTurnitinLocked = _isTurnitinLocked;
     return Container(
       padding: EdgeInsets.all(_getWidth(0.03)),
       decoration: BoxDecoration(
-        color: const Color(0xFFE8F5E9),
+        color: isTurnitinLocked
+            ? const Color(0xFFF2F2F2)
+            : const Color(0xFFE8F5E9),
         borderRadius: BorderRadius.circular(_getWidth(0.02)),
       ),
       child: Column(
@@ -1018,7 +1080,9 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
               Icon(
                 Icons.verified_user,
                 size: _getFontSize(20),
-                color: const Color(0xFF4CAF50),
+                color: isTurnitinLocked
+                    ? const Color(0xFF9E9E9E)
+                    : const Color(0xFF4CAF50),
               ),
               SizedBox(width: _getWidth(0.02)),
               Text(
@@ -1026,7 +1090,9 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                 style: GoogleFonts.outfit(
                   fontSize: _getFontSize(14),
                   fontWeight: FontWeight.bold,
-                  color: const Color(0xFF2E7D32),
+                  color: isTurnitinLocked
+                      ? const Color(0xFF757575)
+                      : const Color(0xFF2E7D32),
                 ),
               ),
               SizedBox(width: _getWidth(0.01)),
@@ -1035,7 +1101,9 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                 style: GoogleFonts.outfit(
                   fontSize: _getFontSize(12),
                   fontWeight: FontWeight.bold,
-                  color: const Color(0xFF757575),
+                  color: isTurnitinLocked
+                      ? const Color(0xFF9E9E9E)
+                      : const Color(0xFF757575),
                 ),
               ),
             ],
@@ -1060,6 +1128,7 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
                   width: _getWidth(0.2),
                   child: TextField(
                     controller: _skorController,
+                    enabled: !isTurnitinLocked,
                     keyboardType: TextInputType.number,
                     maxLength: 3,
                     textAlign: TextAlign.center,
@@ -1114,7 +1183,9 @@ class _UploadPageState extends State<UploadPage> with TickerProviderStateMixin {
               "Masukkan skor presentase kemiripan dari Turnitin (0-100%). Kosongkan jika tidak ada.",
               style: GoogleFonts.outfit(
                 fontSize: _getFontSize(11),
-                color: const Color(0xFF757575),
+                color: isTurnitinLocked
+                    ? const Color(0xFF9E9E9E)
+                    : const Color(0xFF757575),
               ),
             ),
           ),
